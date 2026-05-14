@@ -83,6 +83,11 @@ class MainShell extends StatelessWidget {
     return 0;
   }
 
+  bool get _hideNav =>
+      location.startsWith('/chat') ||
+      location.startsWith('/folder') ||
+      location.startsWith('/file');
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBackground(
@@ -90,14 +95,16 @@ class MainShell extends StatelessWidget {
         extendBody: true,
         backgroundColor: Colors.transparent,
         body: child,
-        bottomNavigationBar: AppBottomNav(
-          currentIndex: _index,
-          onTap: (i) {
-            if (i == 0) context.go('/home');
-            if (i == 1) context.go('/chat');
-            if (i == 2) context.go('/profile');
-          },
-        ),
+        bottomNavigationBar: _hideNav
+            ? null
+            : AppBottomNav(
+                currentIndex: _index,
+                onTap: (i) {
+                  if (i == 0) context.go('/home');
+                  if (i == 1) context.go('/chat');
+                  if (i == 2) context.go('/profile');
+                },
+              ),
       ),
     );
   }

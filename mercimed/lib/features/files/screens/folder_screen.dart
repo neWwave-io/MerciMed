@@ -47,6 +47,38 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
     return 'just now';
   }
 
+  Future<void> _onUploadTap(
+    BuildContext context,
+    WidgetRef ref,
+    Folder folder,
+  ) async {
+    final notifier = ref.read(uploadNotifierProvider.notifier);
+    final messenger = ScaffoldMessenger.of(context);
+
+    final id = await notifier.pickAndUpload(folder.id);
+
+    if (!mounted) return;
+    final err = ref.read(uploadNotifierProvider).errorMessage;
+    if (id == null && err != null) {
+      messenger.clearSnackBars();
+      messenger.showSnackBar(
+        SnackBar(
+          backgroundColor: const Color(0xFFD64B4B),
+          behavior: SnackBarBehavior.floating,
+          content: Text(err, style: const TextStyle(color: Colors.white)),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () {
+              notifier.clearError();
+              _onUploadTap(context, ref, folder);
+            },
+          ),
+        ),
+      );
+    }
+  }
+
   bool _matchesFilter(FileModel f) {
     if (_filter == _DocFilter.all) return true;
     final ext = _ext(f.fileName);
@@ -66,36 +98,44 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
   @override
   Widget build(BuildContext context) {
     final foldersAsync = ref.watch(foldersProvider(null));
-    final filesAsync   = ref.watch(filesProvider(widget.folderId));
+    final filesAsync = ref.watch(filesProvider(widget.folderId));
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: foldersAsync.when(
-        data: (folders) {
-          final folder = folders.firstWhere(
-            (f) => f.id == widget.folderId,
-            orElse: () => Folder(
-              id: widget.folderId,
-              userId: '',
-              name: 'Folder',
-              createdAt: DateTime.now(),
-            ),
-          );
-          final color = _folderColor(folders, folder.id);
+      body: Stack(
+        children: [
+          // ── White base + soft blobs (per design) ─────────────────
+          const Positioned.fill(child: _FolderBackdrop()),
 
-          return filesAsync.when(
-            data: (files) => _buildContent(folder, color, files),
-            loading: () => _buildContent(folder, color, const []),
-            error: (e, _) => _buildContent(folder, color, const []),
-          );
-        },
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (_, _) => const Center(
-          child: Text(
-            'Could not load folder.',
-            style: TextStyle(color: AppTheme.muted),
+          // ── Content ──────────────────────────────────────────────
+          foldersAsync.when(
+            data: (folders) {
+              final folder = folders.firstWhere(
+                (f) => f.id == widget.folderId,
+                orElse: () => Folder(
+                  id: widget.folderId,
+                  userId: '',
+                  name: 'Folder',
+                  createdAt: DateTime.now(),
+                ),
+              );
+              final color = _folderColor(folders, folder.id);
+
+              return filesAsync.when(
+                data: (files) => _buildContent(folder, color, files),
+                loading: () => _buildContent(folder, color, const []),
+                error: (e, _) => _buildContent(folder, color, const []),
+              );
+            },
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (_, _) => const Center(
+              child: Text(
+                'Could not load folder.',
+                style: TextStyle(color: AppTheme.muted),
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -122,7 +162,7 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
             children: [
               // ── Top bar ─────────────────────────────────────────────
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 12, 4),
+                padding: const EdgeInsets.fromLTRB(24, 8, 16, 8),
                 child: Row(
                   children: [
                     GestureDetector(
@@ -245,13 +285,13 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
                       selected: _filter == _DocFilter.all,
                       onTap: () => setState(() => _filter = _DocFilter.all),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     _FilterChip(
                       label: 'PDF • $pdfCount',
                       selected: _filter == _DocFilter.pdf,
                       onTap: () => setState(() => _filter = _DocFilter.pdf),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     _FilterChip(
                       label: 'Images • $imgCount',
                       selected: _filter == _DocFilter.image,
@@ -293,7 +333,7 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
                               context.push('/file/${filtered[i].id}'),
                         ),
                         if (i < filtered.length - 1)
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 14),
                       ],
                     ],
                   ),
@@ -307,15 +347,13 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
             right: 0,
             bottom: 24,
             child: Center(
-              child: _AddDocumentButton(
-                folderName: folder.name,
-                onTap: () {
-                  // Hook into upload flow.
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Upload to ${folder.name} — coming next'),
-                      behavior: SnackBarBehavior.floating,
-                    ),
+              child: Consumer(
+                builder: (context, ref, _) {
+                  final uploadState = ref.watch(uploadNotifierProvider);
+                  return _AddDocumentButton(
+                    folderName: folder.name,
+                    uploadState: uploadState,
+                    onTap: () => _onUploadTap(context, ref, folder),
                   );
                 },
               ),
@@ -325,6 +363,72 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
       ),
     );
   }
+}
+
+// ── White backdrop with soft radial blobs (matches design DSL) ────────────────
+
+class _FolderBackdrop extends StatelessWidget {
+  const _FolderBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(color: Colors.white),
+      child: CustomPaint(
+        painter: _FolderBlobsPainter(),
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+}
+
+class _FolderBlobsPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    // Top-center soft blue
+    _blob(
+      canvas,
+      Offset(w * 0.6, h * -0.05),
+      radius: w * 0.85,
+      color: const Color(0xFFB6D2E0).withValues(alpha: 0.55),
+    );
+
+    // Bottom-left soft mint
+    _blob(
+      canvas,
+      Offset(w * -0.25, h * 0.85),
+      radius: w * 0.95,
+      color: const Color(0xFFC7DFD8).withValues(alpha: 0.55),
+    );
+
+    // Bottom-right deeper mint
+    _blob(
+      canvas,
+      Offset(w * 1.1, h * 1.05),
+      radius: w * 1.0,
+      color: const Color(0xFFCCE0D6).withValues(alpha: 0.55),
+    );
+  }
+
+  void _blob(
+    Canvas canvas,
+    Offset center, {
+    required double radius,
+    required Color color,
+  }) {
+    final paint = Paint()
+      ..shader = RadialGradient(
+        colors: [color, color.withValues(alpha: 0)],
+      ).createShader(Rect.fromCircle(center: center, radius: radius))
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 60);
+    canvas.drawCircle(center, radius, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _FolderBlobsPainter old) => false;
 }
 
 // ── Filter chip ────────────────────────────────────────────────────────────────
@@ -413,8 +517,20 @@ class _DocumentItem extends StatelessWidget {
     return '${months[d.month - 1]} ${d.day.toString().padLeft(2, '0')}';
   }
 
-  bool get _isUploading =>
-      file.aiScanStatus == 'pending' || file.aiScanStatus == 'processing';
+  String? get _statusBadge {
+    switch (file.aiScanStatus) {
+      case 'pending':
+      case 'processing':
+        return 'pending';
+      case 'done':
+      case 'completed':
+        return 'done';
+      case 'failed':
+      case 'error':
+        return 'failed';
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -482,30 +598,9 @@ class _DocumentItem extends StatelessWidget {
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                  if (_isUploading) ...[
+                  if (_statusBadge != null) ...[
                     const SizedBox(height: 6),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: const [
-                        SizedBox(
-                          width: 10,
-                          height: 10,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 1.4,
-                            color: Color(0xFF0D9488),
-                          ),
-                        ),
-                        SizedBox(width: 6),
-                        Text(
-                          'Scanning…',
-                          style: TextStyle(
-                            color: Color(0xFF0D9488),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
+                    _ScanStatusPill(status: _statusBadge!),
                   ],
                 ],
               ),
@@ -522,24 +617,160 @@ class _DocumentItem extends StatelessWidget {
   }
 }
 
+// ── Scan status pill ───────────────────────────────────────────────────────────
+
+class _ScanStatusPill extends StatelessWidget {
+  final String status; // 'pending' | 'done' | 'failed'
+  const _ScanStatusPill({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    switch (status) {
+      case 'done':
+        return _StaticBadge(
+          color: const Color(0xFF0D9488),
+          icon: Icons.check_rounded,
+          label: 'Ready',
+        );
+      case 'failed':
+        return _StaticBadge(
+          color: const Color(0xFFD64B4B),
+          icon: Icons.error_outline_rounded,
+          label: 'Failed',
+        );
+      default:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            SizedBox(
+              width: 10,
+              height: 10,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.4,
+                color: Color(0xFF0D9488),
+              ),
+            ),
+            SizedBox(width: 6),
+            Text(
+              'Saving securely',
+              style: TextStyle(
+                color: Color(0xFF0D9488),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            _AnimatedDots(),
+          ],
+        );
+    }
+  }
+}
+
+class _StaticBadge extends StatelessWidget {
+  final Color color;
+  final IconData icon;
+  final String label;
+  const _StaticBadge({
+    required this.color,
+    required this.icon,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: color, size: 12),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AnimatedDots extends StatefulWidget {
+  const _AnimatedDots();
+
+  @override
+  State<_AnimatedDots> createState() => _AnimatedDotsState();
+}
+
+class _AnimatedDotsState extends State<_AnimatedDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, _) {
+        final t = _ctrl.value;
+        final n = (t * 3).floor() + 1; // 1, 2, or 3
+        return Text(
+          '.' * n,
+          style: const TextStyle(
+            color: Color(0xFF0D9488),
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        );
+      },
+    );
+  }
+}
+
 // ── Bottom "Add to {folder}" button ────────────────────────────────────────────
 
 class _AddDocumentButton extends StatelessWidget {
   final String folderName;
+  final UploadState uploadState;
   final VoidCallback onTap;
 
-  const _AddDocumentButton({required this.folderName, required this.onTap});
+  const _AddDocumentButton({
+    required this.folderName,
+    required this.uploadState,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final uploading = uploadState.isUploading;
+    final label = uploading
+        ? (uploadState.fileName ?? 'Saving securely…')
+        : 'Add to $folderName';
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
+        onTap: uploading ? null : onTap,
         child: Container(
+          width: 260,
           padding:
-              const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+              const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
           decoration: BoxDecoration(
             color: const Color(0xFF1A212B),
             borderRadius: BorderRadius.circular(16),
@@ -551,23 +782,56 @@ class _AddDocumentButton extends StatelessWidget {
               ),
             ],
           ),
-          child: Row(
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.add_rounded,
-                color: Colors.white,
-                size: 20,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (uploading)
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  else
+                    const Icon(
+                      Icons.add_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 8),
-              Text(
-                'Add to $folderName',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
+              if (uploading) ...[
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: uploadState.progress < 0
+                        ? null
+                        : uploadState.progress,
+                    minHeight: 3,
+                    backgroundColor: Colors.white.withValues(alpha: 0.18),
+                    valueColor: const AlwaysStoppedAnimation(Colors.white),
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),

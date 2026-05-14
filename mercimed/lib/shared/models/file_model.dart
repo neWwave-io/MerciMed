@@ -6,6 +6,7 @@ class FileModel {
   final String? fileType;
   final String storagePath;
   final String? extractedText;
+  final String? notes;
   final String aiScanStatus;
   final DateTime createdAt;
 
@@ -17,6 +18,7 @@ class FileModel {
     this.fileType,
     required this.storagePath,
     this.extractedText,
+    this.notes,
     required this.aiScanStatus,
     required this.createdAt,
   });
@@ -29,6 +31,7 @@ class FileModel {
         fileType: json['file_type'] as String?,
         storagePath: json['storage_path'] as String,
         extractedText: json['extracted_text'] as String?,
+        notes: json['notes'] as String?,
         aiScanStatus: json['ai_scan_status'] as String? ?? 'pending',
         createdAt: DateTime.parse(json['created_at'] as String),
       );
@@ -41,6 +44,7 @@ class FileModel {
         'file_type': fileType,
         'storage_path': storagePath,
         'extracted_text': extractedText,
+        'notes': notes,
         'ai_scan_status': aiScanStatus,
         'created_at': createdAt.toIso8601String(),
       };

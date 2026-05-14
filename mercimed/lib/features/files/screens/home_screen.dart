@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../features/family/providers/family_provider.dart';
+import '../../../features/family/widgets/invite_family_sheet.dart';
 import '../../../shared/models/folder.dart';
+import '../../../shared/models/profile.dart';
 import '../../../shared/theme/app_theme.dart';
 import '../providers/files_provider.dart';
 
@@ -34,6 +36,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   String _initial(String? fullName) {
     if (fullName == null || fullName.trim().isEmpty) return '?';
     return fullName.trim()[0].toUpperCase();
+  }
+
+  String _activeOwnerName(List<Profile>? family, String activeId) {
+    if (family == null) return 'family member';
+    final match = family.firstWhere(
+      (p) => p.id == activeId,
+      orElse: () => Profile(id: activeId, createdAt: DateTime.now()),
+    );
+    final name = match.fullName?.trim();
+    if (name == null || name.isEmpty) return 'family member';
+    return name.split(' ').first;
   }
 
   Future<void> _showNewFolderDialog() async {
@@ -70,16 +83,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final profileAsync  = ref.watch(currentUserProfileProvider);
-    final foldersAsync  = ref.watch(foldersProvider(null));
-    final statsAsync    = ref.watch(folderStatsProvider);
-    final familyAsync   = ref.watch(familyMembersForHomeProvider);
+    final profileAsync = ref.watch(currentUserProfileProvider);
+    final foldersAsync = ref.watch(foldersProvider(null));
+    final statsAsync = ref.watch(folderStatsProvider);
+    final familyAsync = ref.watch(familyMembersForHomeProvider);
+    final activeOwner   = ref.watch(activeOwnerProvider);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
         child: CustomScrollView(
           slivers: [
+            // ── Viewing-family banner ────────────────────────────────
+            if (activeOwner != null)
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+                  child: _ViewingFamilyBanner(
+                    name: _activeOwnerName(familyAsync.value, activeOwner),
+                    onExit: () =>
+                        ref.read(activeOwnerProvider.notifier).state = null,
+                  ),
+                ),
+              ),
+
             // ── Top bar ───────────────────────────────────────────────
             SliverToBoxAdapter(
               child: Padding(
@@ -121,7 +148,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         data: (p) => _AvatarItem(
                           label: 'You',
                           initial: _initial(p?.fullName),
-                          isYou: true,
+                          isYou: activeOwner == null,
+                          onTap: activeOwner == null
+                              ? null
+                              : () => ref
+                                  .read(activeOwnerProvider.notifier)
+                                  .state = null,
                         ),
                         loading: () => const _AvatarItem(
                           label: 'You',
@@ -136,7 +168,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               child: _AvatarItem(
                                 label: p.fullName?.split(' ').first ?? '?',
                                 initial: _initial(p.fullName),
-                                isYou: false,
+                                isYou: activeOwner == p.id,
+                                onTap: () => ref
+                                    .read(activeOwnerProvider.notifier)
+                                    .state = p.id,
                               ),
                             )).toList(),
                         loading: () => <Widget>[],
@@ -145,7 +180,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       Padding(
                         padding: const EdgeInsets.only(left: 16),
                         child: _AddFamilyButton(
-                          onTap: () => context.go('/family'),
+                          onTap: () => showInviteFamilySheet(context),
                         ),
                       ),
                     ],
@@ -549,11 +584,13 @@ class _AvatarItem extends StatelessWidget {
   final String label;
   final String initial;
   final bool isYou;
+  final VoidCallback? onTap;
 
   const _AvatarItem({
     required this.label,
     required this.initial,
     required this.isYou,
+    this.onTap,
   });
 
   @override
@@ -580,35 +617,39 @@ class _AvatarItem extends StatelessWidget {
       ),
     );
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        SizedBox(
-          width: 68,
-          height: 68,
-          child: isYou
-              ? Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: accentRing, width: 1.6),
-                  ),
-                  padding: const EdgeInsets.all(3),
-                  child: circle,
-                )
-              : Center(child: circle),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          label,
-          style: const TextStyle(
-            color: Color(0xFF4A5568),
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.2,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 68,
+            height: 68,
+            child: isYou
+                ? Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: accentRing, width: 1.6),
+                    ),
+                    padding: const EdgeInsets.all(3),
+                    child: circle,
+                  )
+                : Center(child: circle),
           ),
-        ),
-      ],
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF4A5568),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -690,6 +731,60 @@ class _DashedCirclePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DashedCirclePainter old) => old.color != color;
+}
+
+// ── Viewing-family banner ──────────────────────────────────────────────────────
+
+class _ViewingFamilyBanner extends StatelessWidget {
+  final String name;
+  final VoidCallback onExit;
+
+  const _ViewingFamilyBanner({required this.name, required this.onExit});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A212B),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.visibility_rounded, color: Colors.white, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "Viewing $name's records",
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: onExit,
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              minimumSize: const Size(0, 32),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'Exit',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 // ── Glass menu button (top bar) ────────────────────────────────────────────────

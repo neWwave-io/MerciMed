@@ -32,6 +32,7 @@ class AuthNotifier extends StateNotifier<AsyncValue<void>> {
       if (res.user != null) {
         await _client.from('profiles').upsert({
           'id': res.user!.id,
+          'email': email,
           'full_name': fullName,
         });
       }

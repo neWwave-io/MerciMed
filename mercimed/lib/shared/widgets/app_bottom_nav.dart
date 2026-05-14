@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -24,43 +26,53 @@ class AppBottomNav extends StatelessWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // ── Floating pill ─────────────────────────────────────
+          // ── Floating glass pill ───────────────────────────────
           Positioned(
             left: 20,
             right: 20,
             bottom: bottomPad + 8,
             height: pillH,
-            child: Container(
-              decoration: BoxDecoration(
-                color: AppTheme.white,
-                borderRadius: BorderRadius.circular(40),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.10),
-                    blurRadius: 24,
-                    offset: const Offset(0, 6),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(40),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(40),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      width: 1,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 24,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  Expanded(child: _NavItem(
-                    icon: Icons.home_outlined,
-                    activeIcon: Icons.home_rounded,
-                    label: 'HOME',
-                    isActive: currentIndex == 0,
-                    onTap: () => onTap(0),
-                  )),
-                  // Centre gap reserved for FAB
-                  const SizedBox(width: fabSize + 20),
-                  Expanded(child: _NavItem(
-                    icon: Icons.person_outline,
-                    activeIcon: Icons.person_rounded,
-                    label: 'PROFILE',
-                    isActive: currentIndex == 2,
-                    onTap: () => onTap(2),
-                  )),
-                ],
+                  child: Row(
+                    children: [
+                      Expanded(child: _NavItem(
+                        icon: Icons.home_outlined,
+                        activeIcon: Icons.home_rounded,
+                        label: 'HOME',
+                        isActive: currentIndex == 0,
+                        onTap: () => onTap(0),
+                      )),
+                      // Centre gap reserved for FAB
+                      const SizedBox(width: fabSize + 20),
+                      Expanded(child: _NavItem(
+                        icon: Icons.person_outline,
+                        activeIcon: Icons.person_rounded,
+                        label: 'PROFILE',
+                        isActive: currentIndex == 2,
+                        onTap: () => onTap(2),
+                      )),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
