@@ -16,9 +16,9 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final _emailCtrl    = TextEditingController();
+  final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
-  final _emailFocus   = FocusNode();
+  final _emailFocus = FocusNode();
   final _passwordFocus = FocusNode();
 
   bool _showPassword = false;
@@ -60,49 +60,35 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         resizeToAvoidBottomInset: true,
         body: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
+            padding: const EdgeInsets.fromLTRB(32, 28, 32, 24),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const SizedBox(height: 32),
+                const SizedBox(height: 16),
 
                 // ── Logo ──────────────────────────────────────────
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: AppTheme.surface,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Center(
-                    child: Text(
-                      'm',
-                      style: TextStyle(
-                        color: AppTheme.teal,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ),
+                _BrandMark(),
 
-                const SizedBox(height: 28),
+                const SizedBox(height: 36),
 
                 // ── Heading ───────────────────────────────────────
                 Text(
                   'MerciMed',
                   style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                        fontSize: 40,
+                        fontSize: 48,
                         fontWeight: FontWeight.w800,
+                        letterSpacing: -0.8,
+                        height: 1.05,
                       ),
                 ),
 
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
 
                 Text(
                   'Your medical record, kept quietly.\nInvitation only.',
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: AppTheme.muted,
+                        color: AppTheme.primaryDark.withValues(alpha: 0.65),
+                        fontWeight: FontWeight.w500,
                         height: 1.5,
                       ),
                 ),
@@ -112,10 +98,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 // ── SIGN IN label ─────────────────────────────────
                 Text(
                   'SIGN IN',
-                  style: Theme.of(context).textTheme.labelSmall,
+                  style: TextStyle(
+                    color: AppTheme.primaryDark.withValues(alpha: 0.55),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.8,
+                  ),
                 ),
 
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
 
                 // ── Email field ───────────────────────────────────
                 PillTextField(
@@ -162,32 +153,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
                 const SizedBox(height: 16),
 
-                // ── Continue / Sign in button ─────────────────────
-                SizedBox(
-                  width: double.infinity,
-                  height: 54,
-                  child: ElevatedButton(
-                    onPressed: authState.isLoading ? null : _onContinue,
-                    child: authState.isLoading
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2,
-                            ),
-                          )
-                        : Text(_showPassword ? 'Sign in' : 'Continue'),
-                  ),
+                // ── Continue button ───────────────────────────────
+                _ContinueButton(
+                  label: _showPassword ? 'Sign in' : 'Continue',
+                  loading: authState.isLoading,
+                  onPressed: authState.isLoading ? null : _onContinue,
                 ),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
 
                 // ── Footer ────────────────────────────────────────
                 Center(
                   child: Text.rich(
                     TextSpan(
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: AppTheme.muted,
                         fontSize: 12,
                         height: 1.4,
@@ -219,13 +198,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
 
                 // ── Create account link ───────────────────────────
                 Center(
                   child: Text.rich(
                     TextSpan(
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: AppTheme.muted,
                         fontSize: 12,
                       ),
@@ -257,8 +236,85 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   String _friendlyError(Object? error) {
     final msg = error?.toString() ?? '';
     if (msg.contains('Invalid login')) return 'Incorrect email or password.';
-    if (msg.contains('Email not confirmed')) return 'Check your email to confirm your account.';
+    if (msg.contains('Email not confirmed')) {
+      return 'Check your email to confirm your account.';
+    }
     if (msg.contains('network')) return 'Connection error. Please try again.';
     return 'Something went wrong. Please try again.';
+  }
+}
+
+class _BrandMark extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 56,
+      height: 56,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Text(
+          'm',
+          style: TextStyle(
+            color: AppTheme.primaryDark,
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            height: 1,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ContinueButton extends StatelessWidget {
+  final String label;
+  final bool loading;
+  final VoidCallback? onPressed;
+
+  const _ContinueButton({
+    required this.label,
+    required this.loading,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: 54,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppTheme.primaryDark,
+          foregroundColor: Colors.white,
+          shape: const StadiumBorder(),
+          elevation: 0,
+          textStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        child: loading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              )
+            : Text(label),
+      ),
+    );
   }
 }

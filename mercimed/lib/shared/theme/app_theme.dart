@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 class AppTheme {
   // Design tokens
-  static const Color background  = Color(0xFFC8D8D4);
+  static const Color background  = Color(0xFFE6F0F5); // gradient start (sky)
+  static const Color backgroundMid = Color(0xFFD4E6DF); // gradient 55% (mint)
+  static const Color backgroundEnd = Color(0xFFCCE0D6); // gradient 100% (deeper mint)
   static const Color surface     = Color(0xFFEFF4F3);
   static const Color primaryDark = Color(0xFF1A2E35);
   static const Color teal        = Color(0xFF2D6B6B);
@@ -20,7 +22,7 @@ class AppTheme {
         ),
         scaffoldBackgroundColor: background,
         appBarTheme: const AppBarTheme(
-          backgroundColor: background,
+          backgroundColor: Colors.transparent,
           elevation: 0,
           scrolledUnderElevation: 0,
           centerTitle: false,

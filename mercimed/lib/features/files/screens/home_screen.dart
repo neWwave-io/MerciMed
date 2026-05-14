@@ -83,31 +83,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             // ── Top bar ───────────────────────────────────────────────
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 12, 0),
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
                 child: Row(
                   children: [
                     Text(
                       'MerciMed',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -0.4,
-                          ),
+                      style: const TextStyle(
+                        color: AppTheme.primaryDark,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.4,
+                        height: 1.3,
+                      ),
                     ),
                     const Spacer(),
-                    PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_horiz_rounded, size: 22),
-                      color: AppTheme.surface,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
+                    _GlassMenuButton(
                       onSelected: (v) {
                         if (v == 'new_folder') _showNewFolderDialog();
                       },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(
-                          value: 'new_folder',
-                          child: Text('New folder'),
-                        ),
-                      ],
                     ),
                   ],
                 ),
@@ -117,12 +110,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             // ── Family avatars ────────────────────────────────────────
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.only(top: 16),
+                padding: const EdgeInsets.only(top: 24),
                 child: SizedBox(
-                  height: 72,
+                  height: 102,
                   child: ListView(
                     scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
                     children: [
                       profileAsync.when(
                         data: (p) => _AvatarItem(
@@ -164,35 +157,53 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             // ── Greeting ──────────────────────────────────────────────
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 0),
                 child: profileAsync.when(
                   data: (p) {
                     final first = p?.fullName?.split(' ').first ?? '';
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          _greeting,
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineMedium
-                              ?.copyWith(fontWeight: FontWeight.w400),
+                        const Text(
+                          'Good evening,',
+                          style: TextStyle(
+                            color: AppTheme.primaryDark,
+                            fontSize: 32,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.8,
+                            height: 1.15,
+                          ),
                         ),
                         if (first.isNotEmpty)
                           Text(
-                            first,
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineMedium
-                                ?.copyWith(fontWeight: FontWeight.w800),
+                            '$first.',
+                            style: const TextStyle(
+                              color: AppTheme.primaryDark,
+                              fontSize: 32,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.8,
+                              height: 1.15,
+                            ),
                           ),
                       ],
                     );
                   },
-                  loading: () => const SizedBox(height: 58),
+                  loading: () => Text(
+                    _greeting,
+                    style: const TextStyle(
+                      color: AppTheme.primaryDark,
+                      fontSize: 32,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.8,
+                    ),
+                  ),
                   error: (_, _) => Text(
                     _greeting,
-                    style: Theme.of(context).textTheme.headlineMedium,
+                    style: const TextStyle(
+                      color: AppTheme.primaryDark,
+                      fontSize: 32,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
               ),
@@ -201,15 +212,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             // ── Search bar ────────────────────────────────────────────
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: AppTheme.white,
-                    borderRadius: BorderRadius.circular(16),
+                    color: Colors.white.withValues(alpha: 0.78),
+                    borderRadius: BorderRadius.circular(32),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.06),
-                        blurRadius: 16,
+                        color: Colors.black.withValues(alpha: 0.05),
+                        blurRadius: 12,
                         offset: const Offset(0, 2),
                       ),
                     ],
@@ -225,33 +236,42 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ),
                     decoration: InputDecoration(
                       hintText: 'Search your records',
-                      hintStyle: const TextStyle(
-                        color: AppTheme.muted,
+                      hintStyle: TextStyle(
+                        color: AppTheme.primaryDark.withValues(alpha: 0.45),
                         fontSize: 14,
                       ),
-                      prefixIcon: const Icon(
-                        Icons.search_rounded,
-                        color: AppTheme.muted,
-                        size: 18,
+                      prefixIcon: Padding(
+                        padding: const EdgeInsets.only(left: 18, right: 12),
+                        child: Icon(
+                          Icons.search_rounded,
+                          color: AppTheme.primaryDark.withValues(alpha: 0.55),
+                          size: 22,
+                        ),
+                      ),
+                      prefixIconConstraints: const BoxConstraints(
+                        minWidth: 0,
+                        minHeight: 0,
                       ),
                       suffixIcon: Padding(
-                        padding: const EdgeInsets.only(right: 14),
+                        padding: const EdgeInsets.only(right: 18),
                         child: Align(
                           widthFactor: 1.0,
                           alignment: Alignment.centerRight,
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 3),
+                                horizontal: 7, vertical: 3),
                             decoration: BoxDecoration(
-                              color: AppTheme.surface,
+                              color: Colors.black.withValues(alpha: 0.05),
                               borderRadius: BorderRadius.circular(6),
                             ),
-                            child: const Text(
+                            child: Text(
                               '⌘K',
                               style: TextStyle(
                                 fontSize: 10,
-                                color: AppTheme.muted,
-                                fontWeight: FontWeight.w500,
+                                color: AppTheme.primaryDark
+                                    .withValues(alpha: 0.6),
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.4,
                               ),
                             ),
                           ),
@@ -261,8 +281,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       enabledBorder: InputBorder.none,
                       focusedBorder: InputBorder.none,
                       contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 16,
+                        horizontal: 0,
+                        vertical: 18,
                       ),
                     ),
                   ),
@@ -273,7 +293,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             // ── Folders header ────────────────────────────────────────
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
+                padding: const EdgeInsets.fromLTRB(24, 32, 24, 16),
                 child: foldersAsync.when(
                   data: (folders) {
                     final totalFiles = statsAsync.value?.values
@@ -281,22 +301,48 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         0;
                     return Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        Text('FOLDERS',
-                            style:
-                                Theme.of(context).textTheme.labelSmall),
+                        const Text(
+                          'FOLDERS',
+                          style: TextStyle(
+                            color: Color(0xFF4A5568),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.6,
+                          ),
+                        ),
                         if (folders.isNotEmpty)
                           Text(
                             '${folders.length} · $totalFiles file${totalFiles == 1 ? '' : 's'}',
-                            style: Theme.of(context).textTheme.labelSmall,
+                            style: const TextStyle(
+                              color: Color(0xFF4A5568),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.4,
+                            ),
                           ),
                       ],
                     );
                   },
-                  loading: () => Text('FOLDERS',
-                      style: Theme.of(context).textTheme.labelSmall),
-                  error: (_, _) => Text('FOLDERS',
-                      style: Theme.of(context).textTheme.labelSmall),
+                  loading: () => const Text(
+                    'FOLDERS',
+                    style: TextStyle(
+                      color: Color(0xFF4A5568),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.6,
+                    ),
+                  ),
+                  error: (_, _) => const Text(
+                    'FOLDERS',
+                    style: TextStyle(
+                      color: Color(0xFF4A5568),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.6,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -333,14 +379,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 }
 
                 return SliverPadding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
                   sliver: SliverGrid.builder(
                     gridDelegate:
                         const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 2,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 12,
-                      childAspectRatio: 1.05,
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                      childAspectRatio: 1.0,
                     ),
                     itemCount: filtered.length,
                     itemBuilder: (_, i) {
@@ -430,17 +476,17 @@ class _FolderCard extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: AppTheme.white,
-          borderRadius: BorderRadius.circular(20),
+          color: Colors.white.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.07),
-              blurRadius: 20,
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 18,
               offset: const Offset(0, 4),
             ),
           ],
         ),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(18),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -450,7 +496,7 @@ class _FolderCard extends StatelessWidget {
                 Container(
                   width: 8,
                   height: 8,
-                  margin: const EdgeInsets.only(top: 3),
+                  margin: const EdgeInsets.only(top: 6),
                   decoration: BoxDecoration(
                     color: color,
                     shape: BoxShape.circle,
@@ -462,7 +508,7 @@ class _FolderCard extends StatelessWidget {
                     '$count',
                     style: const TextStyle(
                       fontSize: 13,
-                      color: AppTheme.muted,
+                      color: Color(0xFF4A5568),
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -473,19 +519,21 @@ class _FolderCard extends StatelessWidget {
               folder.name,
               style: const TextStyle(
                 color: AppTheme.primaryDark,
-                fontSize: 16,
+                fontSize: 17,
                 fontWeight: FontWeight.w700,
+                letterSpacing: -0.3,
                 height: 1.2,
               ),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(
               _timeAgo(stats?.lastUpdated),
               style: const TextStyle(
-                color: AppTheme.muted,
+                color: Color(0xFF6B7C8C),
                 fontSize: 12,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ],
@@ -510,37 +558,54 @@ class _AvatarItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: isYou ? AppTheme.surface : AppTheme.primaryDark,
-            border: isYou
-                ? Border.all(color: AppTheme.muted, width: 1.5)
-                : null,
-          ),
-          child: Center(
-            child: Text(
-              initial,
-              style: TextStyle(
-                color: isYou ? AppTheme.primaryDark : AppTheme.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+    const tile = Color(0xFFE3EFE9); // soft mint surface
+    const accentRing = Color(0xFF1E293B);
+
+    final circle = Container(
+      width: 60,
+      height: 60,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: tile,
+      ),
+      child: Center(
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color: AppTheme.primaryDark,
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 4),
+      ),
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          width: 68,
+          height: 68,
+          child: isYou
+              ? Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: accentRing, width: 1.6),
+                  ),
+                  padding: const EdgeInsets.all(3),
+                  child: circle,
+                )
+              : Center(child: circle),
+        ),
+        const SizedBox(height: 8),
         Text(
           label,
           style: const TextStyle(
-            color: AppTheme.muted,
-            fontSize: 10,
-            fontWeight: FontWeight.w500,
+            color: Color(0xFF4A5568),
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.2,
           ),
         ),
       ],
@@ -561,28 +626,105 @@ class _AddFamilyButton extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: AppTheme.muted.withValues(alpha: 0.5),
-                width: 1.5,
+          CustomPaint(
+            painter: _DashedCirclePainter(
+              color: const Color(0xFF4A5568).withValues(alpha: 0.55),
+            ),
+            child: const SizedBox(
+              width: 68,
+              height: 68,
+              child: Center(
+                child: Icon(
+                  Icons.add_rounded,
+                  size: 22,
+                  color: Color(0xFF4A5568),
+                ),
               ),
             ),
-            child: const Center(
-              child: Icon(Icons.add, size: 18, color: AppTheme.muted),
-            ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           const Text(
             'Add',
             style: TextStyle(
-              color: AppTheme.muted,
-              fontSize: 10,
-              fontWeight: FontWeight.w500,
+              color: Color(0xFF4A5568),
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DashedCirclePainter extends CustomPainter {
+  final Color color;
+  _DashedCirclePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4;
+
+    final radius = size.width / 2;
+    final center = Offset(radius, radius);
+    const dashCount = 28;
+    const gapFraction = 0.45;
+    final sweepPerSegment = (2 * 3.141592653589793) / dashCount;
+    final dashSweep = sweepPerSegment * (1 - gapFraction);
+
+    for (var i = 0; i < dashCount; i++) {
+      final start = i * sweepPerSegment;
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius - 0.7),
+        start,
+        dashSweep,
+        false,
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashedCirclePainter old) => old.color != color;
+}
+
+// ── Glass menu button (top bar) ────────────────────────────────────────────────
+
+class _GlassMenuButton extends StatelessWidget {
+  final ValueChanged<String> onSelected;
+  const _GlassMenuButton({required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.55),
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.9),
+          width: 1,
+        ),
+      ),
+      child: PopupMenuButton<String>(
+        icon: const Icon(
+          Icons.more_vert_rounded,
+          size: 20,
+          color: AppTheme.primaryDark,
+        ),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 38, height: 38),
+        color: Colors.white,
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        onSelected: onSelected,
+        itemBuilder: (_) => const [
+          PopupMenuItem(
+            value: 'new_folder',
+            child: Text('New folder'),
           ),
         ],
       ),
