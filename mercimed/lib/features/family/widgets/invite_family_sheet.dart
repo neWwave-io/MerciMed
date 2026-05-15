@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -249,10 +250,9 @@ class _ResultsList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (query.isEmpty) {
-      return const _CenterMessage(
-        icon: Icons.person_search_rounded,
-        title: 'Find a family member',
-        body: 'Type a name or email of someone who already has a MerciMed account.',
+      return _SuggestedGrid(
+        scrollCtrl: scrollCtrl,
+        onTapProfile: onTapProfile,
       );
     }
     return asyncResults.when(
@@ -365,6 +365,154 @@ class _ResultsList extends StatelessWidget {
         icon: Icons.error_outline_rounded,
         title: 'Search failed',
         body: '$e',
+      ),
+    );
+  }
+}
+
+/// Pre-search empty state: a 3-up grid of suggested users with their avatar
+/// and name. Tapping a tile sends an invite (via [onTapProfile]).
+class _SuggestedGrid extends ConsumerWidget {
+  final ScrollController scrollCtrl;
+  final void Function(Profile) onTapProfile;
+
+  const _SuggestedGrid({
+    required this.scrollCtrl,
+    required this.onTapProfile,
+  });
+
+  String _initial(Profile p) {
+    final n = p.fullName?.trim();
+    if (n != null && n.isNotEmpty) return n[0].toUpperCase();
+    final e = p.email?.trim();
+    if (e != null && e.isNotEmpty) return e[0].toUpperCase();
+    return '?';
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncSuggested = ref.watch(suggestedUsersProvider);
+    return asyncSuggested.when(
+      data: (people) {
+        if (people.isEmpty) {
+          return const _CenterMessage(
+            icon: Icons.group_outlined,
+            title: 'No one to suggest',
+            body:
+                "There aren't any other MerciMed members to invite yet. Try searching by name or email.",
+          );
+        }
+        return GridView.builder(
+          controller: scrollCtrl,
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            mainAxisSpacing: 18,
+            crossAxisSpacing: 12,
+            childAspectRatio: 0.82,
+          ),
+          itemCount: people.length,
+          itemBuilder: (_, i) {
+            final p = people[i];
+            return _SuggestedTile(
+              profile: p,
+              initial: _initial(p),
+              onTap: () => onTapProfile(p),
+            );
+          },
+        );
+      },
+      loading: () => const Padding(
+        padding: EdgeInsets.only(top: 40),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (e, _) => _CenterMessage(
+        icon: Icons.error_outline_rounded,
+        title: 'Could not load members',
+        body: '$e',
+      ),
+    );
+  }
+}
+
+class _SuggestedTile extends StatelessWidget {
+  final Profile profile;
+  final String initial;
+  final VoidCallback onTap;
+
+  const _SuggestedTile({
+    required this.profile,
+    required this.initial,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final name = profile.fullName?.trim().isNotEmpty == true
+        ? profile.fullName!.trim()
+        : profile.email ?? '—';
+    final avatarUrl = profile.avatarUrl;
+    final hasUrl = avatarUrl != null && avatarUrl.isNotEmpty;
+
+    final fallback = Container(
+      width: 72,
+      height: 72,
+      decoration: const BoxDecoration(
+        color: Color(0xFFE3EFE9),
+        shape: BoxShape.circle,
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        initial,
+        style: const TextStyle(
+          color: AppTheme.primaryDark,
+          fontSize: 26,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 72,
+                height: 72,
+                child: hasUrl
+                    ? ClipOval(
+                        child: CachedNetworkImage(
+                          imageUrl: avatarUrl,
+                          width: 72,
+                          height: 72,
+                          fit: BoxFit.cover,
+                          placeholder: (_, _) => fallback,
+                          errorWidget: (_, _, _) => fallback,
+                        ),
+                      )
+                    : fallback,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AppTheme.primaryDark,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

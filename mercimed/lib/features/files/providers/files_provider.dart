@@ -21,7 +21,8 @@ class FolderStats {
 
 final currentUserProfileProvider = FutureProvider<Profile?>((ref) async {
   final client = ref.watch(supabaseClientProvider);
-  final user = client.auth.currentUser;
+  // Depend on the auth-aware user provider so this refetches on login.
+  final user = ref.watch(currentUserProvider);
   if (user == null) return null;
   final data = await client
       .from('profiles')
@@ -45,8 +46,39 @@ final _ownerFoldersStreamProvider =
       .stream(primaryKey: ['id'])
       .eq('user_id', ownerId)
       .order('created_at')
-      .map((rows) => rows.map(Folder.fromJson).toList());
+      .map((rows) {
+        final folders = rows.map(Folder.fromJson).toList();
+        // Custom-ordered folders first (ascending sort_order), then
+        // anything still NULL (older rows, or freshly created) in
+        // creation order — which the server already returned.
+        folders.sort((a, b) {
+          final ao = a.sortOrder;
+          final bo = b.sortOrder;
+          if (ao != null && bo != null) return ao.compareTo(bo);
+          if (ao != null) return -1;
+          if (bo != null) return 1;
+          return a.createdAt.compareTo(b.createdAt);
+        });
+        return folders;
+      });
 });
+
+/// Persists a new ordering for [ordered] by writing `sort_order = index + 1`
+/// for each row. The first item in the list ends up at position 1 (top-left
+/// in the folder grid).
+Future<void> persistFolderOrder(
+  SupabaseClient client,
+  List<Folder> ordered,
+) async {
+  if (ordered.isEmpty) return;
+  await Future.wait([
+    for (var i = 0; i < ordered.length; i++)
+      client
+          .from('folders')
+          .update({'sort_order': i + 1})
+          .eq('id', ordered[i].id),
+  ]);
+}
 
 /// Standard (non-chat) folders under a given parent (null = root).
 /// Reactively follows [_ownerFoldersStreamProvider]. Chat-auto-created

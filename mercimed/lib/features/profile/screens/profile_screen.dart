@@ -11,6 +11,7 @@ import '../../../features/files/providers/files_provider.dart';
 import '../../../shared/models/profile.dart';
 import '../../../shared/theme/app_theme.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../widgets/edit_profile_sheet.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -119,9 +120,12 @@ class ProfileScreen extends ConsumerWidget {
             children: [
               Row(
                 children: [
-                  _ProfileAvatar(
-                    initial: initial,
-                    url: profile?.avatarUrl,
+                  GestureDetector(
+                    onTap: () => showEditProfileSheet(context, profile),
+                    child: _ProfileAvatar(
+                      initial: initial,
+                      url: profile?.avatarUrl,
+                    ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -152,6 +156,9 @@ class ProfileScreen extends ConsumerWidget {
                         ),
                       ],
                     ),
+                  ),
+                  _EditProfileButton(
+                    onTap: () => showEditProfileSheet(context, profile),
                   ),
                 ],
               ),
@@ -321,6 +328,53 @@ class _GlassCard extends StatelessWidget {
             ),
             padding: padding,
             child: child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Edit profile pill ─────────────────────────────────────────────────────────
+
+class _EditProfileButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _EditProfileButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(100),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(100),
+            border: Border.all(
+              color: AppTheme.primaryDark.withValues(alpha: 0.12),
+            ),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.edit_rounded,
+                size: 13,
+                color: AppTheme.primaryDark,
+              ),
+              SizedBox(width: 6),
+              Text(
+                'Edit',
+                style: TextStyle(
+                  color: AppTheme.primaryDark,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
         ),
       ),
