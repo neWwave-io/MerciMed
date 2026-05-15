@@ -25,11 +25,6 @@ class ProfileScreen extends ConsumerWidget {
     return full.trim().split(' ').first;
   }
 
-  String _memberNumber(String id) {
-    final hash = id.hashCode.abs() % 999;
-    return 'No. ${hash.toString().padLeft(3, '0')}';
-  }
-
   String _shortMonthYear(DateTime? dt) {
     if (dt == null) return '—';
     const months = [
@@ -45,6 +40,11 @@ class ProfileScreen extends ConsumerWidget {
     final profileAsync = ref.watch(currentUserProfileProvider);
     final familyAsync = ref.watch(familyMembersForHomeProvider);
     final pendingAsync = ref.watch(pendingRequestsProvider);
+    final filesAsync = ref.watch(ownerFilesStreamProvider);
+    final foldersAsync = ref.watch(foldersProvider(null));
+
+    final fileCount = filesAsync.value?.length ?? 0;
+    final folderCount = foldersAsync.value?.length ?? 0;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -58,6 +58,8 @@ class ProfileScreen extends ConsumerWidget {
             profile,
             familyAsync.value ?? const <Profile>[],
             pendingAsync.value ?? const <PendingRequest>[],
+            fileCount: fileCount,
+            folderCount: folderCount,
           ),
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (_, _) => _buildBody(
@@ -67,6 +69,8 @@ class ProfileScreen extends ConsumerWidget {
             null,
             familyAsync.value ?? const <Profile>[],
             pendingAsync.value ?? const <PendingRequest>[],
+            fileCount: fileCount,
+            folderCount: folderCount,
           ),
         ),
       ),
@@ -79,11 +83,12 @@ class ProfileScreen extends ConsumerWidget {
     String email,
     Profile? profile,
     List<Profile> family,
-    List<PendingRequest> pending,
-  ) {
+    List<PendingRequest> pending, {
+    required int fileCount,
+    required int folderCount,
+  }) {
     final fullName = profile?.fullName ?? email.split('@').first;
     final initial = _initial(profile?.fullName, 'S');
-    final memberId = _memberNumber(profile?.id ?? email);
     final since = _shortMonthYear(profile?.createdAt);
 
     return ListView(
@@ -154,9 +159,9 @@ class ProfileScreen extends ConsumerWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _MembershipStat(label: 'MEMBER', value: memberId),
+                  _MembershipStat(label: 'FILES', value: '$fileCount'),
+                  _MembershipStat(label: 'FOLDERS', value: '$folderCount'),
                   _MembershipStat(label: 'SINCE', value: since),
-                  const _MembershipStat(label: 'PLAN', value: 'Founders'),
                 ],
               ),
             ],
@@ -232,33 +237,6 @@ class ProfileScreen extends ConsumerWidget {
                       ),
                   ],
                 ),
-        ),
-
-        const SizedBox(height: 24),
-
-        // ── Care team ─────────────────────────────────────────────
-        const _SectionHeader(
-          label: 'CARE TEAM',
-          subtitle: '0 doctors',
-        ),
-        const SizedBox(height: 12),
-        _GlassCard(
-          radius: 28,
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Center(
-              child: Text(
-                'Your saved doctors will appear here.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: AppTheme.primaryDark.withValues(alpha: 0.55),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ),
         ),
 
         const SizedBox(height: 32),

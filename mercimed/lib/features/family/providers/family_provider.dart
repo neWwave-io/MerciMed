@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -50,34 +52,76 @@ final _incomingRelationshipsStreamProvider =
       .eq('target_id', user.id);
 });
 
-/// Approved family members — used in the avatar row. Derived live from
-/// both relationship streams (requester + target).
+/// Approved family members — used in the home avatar row. Implemented as a
+/// StreamProvider so every realtime UPDATE on `relationships` (e.g. someone
+/// approving your pending invite) emits a fresh family list without the
+/// FutureProvider's rebuild delay.
 final familyMembersForHomeProvider =
-    FutureProvider.autoDispose<List<Profile>>((ref) async {
+    StreamProvider.autoDispose<List<Profile>>((ref) {
   final client = ref.watch(supabaseClientProvider);
   final user = client.auth.currentUser;
-  if (user == null) return const [];
+  if (user == null) return Stream.value(const []);
 
-  final outgoing = ref.watch(_outgoingRelationshipsStreamProvider).value ?? [];
-  final incoming = ref.watch(_incomingRelationshipsStreamProvider).value ?? [];
+  final controller = StreamController<List<Profile>>();
+  Set<String> lastIds = {};
+  List<Profile> lastProfiles = const [];
+  bool initialized = false;
 
-  final otherIds = <String>{
-    for (final r in outgoing)
-      if (r['status'] == 'approved') r['target_id'] as String,
-    for (final r in incoming)
-      if (r['status'] == 'approved') r['requester_id'] as String,
-  };
+  Future<void> publish() async {
+    final outgoing =
+        ref.read(_outgoingRelationshipsStreamProvider).value ?? const [];
+    final incoming =
+        ref.read(_incomingRelationshipsStreamProvider).value ?? const [];
+    final ids = <String>{
+      for (final r in outgoing)
+        if (r['status'] == 'approved') r['target_id'] as String,
+      for (final r in incoming)
+        if (r['status'] == 'approved') r['requester_id'] as String,
+    };
+    final sameSet =
+        ids.length == lastIds.length && ids.every(lastIds.contains);
+    if (sameSet && initialized) {
+      // No relationship change — re-emit cached so subscribers don't get
+      // stuck on the initial empty state.
+      if (!controller.isClosed) controller.add(lastProfiles);
+      return;
+    }
+    lastIds = ids;
+    initialized = true;
+    if (ids.isEmpty) {
+      lastProfiles = const [];
+      if (!controller.isClosed) controller.add(lastProfiles);
+      return;
+    }
+    try {
+      final rows = await client
+          .from('profiles')
+          .select()
+          .inFilter('id', ids.toList());
+      lastProfiles = (rows as List)
+          .map((p) => Profile.fromJson(p as Map<String, dynamic>))
+          .toList();
+      if (!controller.isClosed) controller.add(lastProfiles);
+    } catch (_) {
+      if (!controller.isClosed) controller.add(lastProfiles);
+    }
+  }
 
-  if (otherIds.isEmpty) return const [];
+  // Listen reactively to both relationship streams. Any INSERT / UPDATE /
+  // DELETE on relationships flips one of these, which calls publish().
+  ref.listen(
+    _outgoingRelationshipsStreamProvider,
+    (_, _) => publish(),
+    fireImmediately: true,
+  );
+  ref.listen(
+    _incomingRelationshipsStreamProvider,
+    (_, _) => publish(),
+    fireImmediately: true,
+  );
 
-  final profiles = await client
-      .from('profiles')
-      .select()
-      .inFilter('id', otherIds.toList());
-
-  return (profiles as List)
-      .map((p) => Profile.fromJson(p as Map<String, dynamic>))
-      .toList();
+  ref.onDispose(controller.close);
+  return controller.stream;
 });
 
 class PendingRequest {
@@ -129,6 +173,37 @@ final pendingRequestsProvider =
       createdAt: DateTime.parse(r['created_at'] as String),
     );
   }).toList();
+});
+
+/// Live search over public.profiles by name or email. Excludes the signed-in
+/// user and anyone the user is already related to (pending or approved).
+final userSearchProvider = FutureProvider.autoDispose
+    .family<List<Profile>, String>((ref, query) async {
+  final client = ref.watch(supabaseClientProvider);
+  final user = client.auth.currentUser;
+  if (user == null) return const [];
+  final q = query.trim();
+  if (q.isEmpty) return const [];
+
+  final escaped = q.replaceAll(',', '\\,').replaceAll(')', '\\)');
+  final rows = await client
+      .from('profiles')
+      .select()
+      .or('full_name.ilike.%$escaped%,email.ilike.%$escaped%')
+      .neq('id', user.id)
+      .limit(20);
+
+  final outgoing = ref.watch(_outgoingRelationshipsStreamProvider).value ?? [];
+  final incoming = ref.watch(_incomingRelationshipsStreamProvider).value ?? [];
+  final relatedIds = <String>{
+    for (final r in outgoing) r['target_id'] as String,
+    for (final r in incoming) r['requester_id'] as String,
+  };
+
+  return (rows as List)
+      .map((p) => Profile.fromJson(p as Map<String, dynamic>))
+      .where((p) => !relatedIds.contains(p.id))
+      .toList();
 });
 
 class FamilyInviteResult {
@@ -199,6 +274,44 @@ class FamilyNotifier extends StateNotifier<AsyncValue<void>> {
         'status': 'pending',
       });
 
+      return const FamilyInviteResult.ok();
+    } catch (e) {
+      return FamilyInviteResult.fail('Could not send request: $e');
+    }
+  }
+
+  /// Sends an invite to a user directly by their id (used by the new
+  /// search-based picker). Returns a result so the UI can show errors.
+  Future<FamilyInviteResult> sendInviteByUserId({
+    required String targetUserId,
+    required String relationshipType,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      return const FamilyInviteResult.fail('Please sign in again.');
+    }
+    if (targetUserId == user.id) {
+      return const FamilyInviteResult.fail("You can't add yourself.");
+    }
+    try {
+      final existing = await _client
+          .from('relationships')
+          .select('id, status')
+          .or('and(requester_id.eq.${user.id},target_id.eq.$targetUserId),'
+              'and(requester_id.eq.$targetUserId,target_id.eq.${user.id})')
+          .maybeSingle();
+      if (existing != null) {
+        final status = existing['status'] as String?;
+        return FamilyInviteResult.fail(
+          status == 'approved' ? 'Already connected.' : 'Request already sent.',
+        );
+      }
+      await _client.from('relationships').insert({
+        'requester_id': user.id,
+        'target_id': targetUserId,
+        'relationship_type': relationshipType,
+        'status': 'pending',
+      });
       return const FamilyInviteResult.ok();
     } catch (e) {
       return FamilyInviteResult.fail('Could not send request: $e');

@@ -342,11 +342,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      floatingActionButton: Padding(
-        // Lift above the floating glass nav bar in MainShell.
-        padding: const EdgeInsets.only(bottom: 81),
-        child: _NewFolderFab(onTap: _showNewFolderDialog),
-      ),
+      // Hide the "new folder" FAB when viewing a family member's records —
+      // the viewer can't create folders on someone else's account.
+      floatingActionButton: activeOwner == null
+          ? Padding(
+              // Lift above the floating glass nav bar in MainShell.
+              padding: const EdgeInsets.only(bottom: 81),
+              child: _NewFolderFab(onTap: _showNewFolderDialog),
+            )
+          : null,
       body: SafeArea(
         bottom: false,
         child: CustomScrollView(
@@ -512,17 +516,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               emptyMessage: 'Setting up your records…',
               colorOffset: 0,
             ),
-            ..._buildFolderSection(
-              title: 'CHAT FOLDERS',
-              foldersAsync: chatFoldersAsync,
-              statsAsync: statsAsync,
-              isOpen: _chatFoldersOpen,
-              onToggle:
-                  () => setState(() => _chatFoldersOpen = !_chatFoldersOpen),
-              emptyMessage:
-                  'Upload a file in chat to start one — Mercie names it after your conversation.',
-              colorOffset: 3,
-            ),
+            // Hide the Chat Folders section entirely when viewing a family
+            // member's records — those folders are private to the chat owner.
+            if (activeOwner == null)
+              ..._buildFolderSection(
+                title: 'CHAT FOLDERS',
+                foldersAsync: chatFoldersAsync,
+                statsAsync: statsAsync,
+                isOpen: _chatFoldersOpen,
+                onToggle: () =>
+                    setState(() => _chatFoldersOpen = !_chatFoldersOpen),
+                emptyMessage:
+                    'Upload a file in chat to start one — Mercie names it after your conversation.',
+                colorOffset: 3,
+              ),
 
             const SliverToBoxAdapter(child: SizedBox(height: 120)),
           ],
