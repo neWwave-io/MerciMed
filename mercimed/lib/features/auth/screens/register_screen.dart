@@ -1,3 +1,7 @@
+import 'dart:io';
+import 'dart:ui';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,6 +28,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _passwordFocus = FocusNode();
 
   bool _showDetails = false;
+  File? _avatar;
 
   @override
   void dispose() {
@@ -34,6 +39,17 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     _nameFocus.dispose();
     _passwordFocus.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickAvatar() async {
+    final res = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: false,
+    );
+    if (res == null || res.files.isEmpty) return;
+    final path = res.files.single.path;
+    if (path == null) return;
+    setState(() => _avatar = File(path));
   }
 
   Future<void> _onContinue() async {
@@ -56,6 +72,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           email,
           password,
           name,
+          avatar: _avatar,
         );
   }
 
@@ -68,7 +85,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         backgroundColor: Colors.transparent,
         resizeToAvoidBottomInset: true,
         body: SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(32, 28, 32, 24),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -77,12 +94,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
                 _BrandMark(),
 
-                const SizedBox(height: 36),
+                const SizedBox(height: 28),
 
                 Text(
                   'MerciMed',
                   style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                        fontSize: 48,
+                        fontSize: 44,
                         fontWeight: FontWeight.w800,
                         letterSpacing: -0.8,
                         height: 1.05,
@@ -100,7 +117,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       ),
                 ),
 
-                const Spacer(),
+                const SizedBox(height: 28),
 
                 Text(
                   'CREATE ACCOUNT',
@@ -112,7 +129,17 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
+
+                // ── Avatar picker ─────────────────────────────────
+                Center(
+                  child: _AvatarPicker(
+                    file: _avatar,
+                    onTap: _pickAvatar,
+                  ),
+                ),
+
+                const SizedBox(height: 20),
 
                 PillTextField(
                   controller: _emailCtrl,
@@ -255,33 +282,178 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   }
 }
 
+// ── Brand mark ───────────────────────────────────────────────────────────────
+
 class _BrandMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 56,
-      height: 56,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
+    const size = 72.0;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          ClipOval(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+              child: Container(
+                width: size,
+                height: size,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.white.withValues(alpha: 0.32),
+                      Colors.white.withValues(alpha: 0.12),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          ShaderMask(
+            shaderCallback: (rect) => LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                AppTheme.primaryDark,
+                AppTheme.primaryDark.withValues(alpha: 0.82),
+              ],
+            ).createShader(rect),
+            child: const Text(
+              'm',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 38,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.8,
+                height: 1,
+              ),
+            ),
           ),
         ],
       ),
-      child: Center(
-        child: Text(
-          'm',
-          style: TextStyle(
-            color: AppTheme.primaryDark,
-            fontSize: 28,
-            fontWeight: FontWeight.w800,
-            height: 1,
+    );
+  }
+}
+
+// ── Avatar picker (glass circle) ─────────────────────────────────────────────
+
+class _AvatarPicker extends StatelessWidget {
+  final File? file;
+  final VoidCallback onTap;
+
+  const _AvatarPicker({required this.file, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    const size = 104.0;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: size,
+            height: size,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Soft drop + lift shadows
+                Container(
+                  width: size,
+                  height: size,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppTheme.primaryDark.withValues(alpha: 0.10),
+                        blurRadius: 22,
+                        spreadRadius: -2,
+                        offset: const Offset(0, 8),
+                      ),
+                      BoxShadow(
+                        color: Colors.white.withValues(alpha: 0.45),
+                        blurRadius: 14,
+                        spreadRadius: -4,
+                        offset: const Offset(0, -2),
+                      ),
+                    ],
+                  ),
+                ),
+                // Glass body — refracts the bubbles behind it.
+                ClipOval(
+                  child: file != null
+                      ? Image.file(
+                          file!,
+                          width: size,
+                          height: size,
+                          fit: BoxFit.cover,
+                        )
+                      : BackdropFilter(
+                          filter:
+                              ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+                          child: Container(
+                            width: size,
+                            height: size,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.white.withValues(alpha: 0.42),
+                                  Colors.white.withValues(alpha: 0.18),
+                                ],
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.add_a_photo_outlined,
+                              size: 28,
+                              color: AppTheme.primaryDark
+                                  .withValues(alpha: 0.65),
+                            ),
+                          ),
+                        ),
+                ),
+                // Small "edit" badge in the corner when an image is set.
+                if (file != null)
+                  Positioned(
+                    right: 2,
+                    bottom: 2,
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryDark,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                      child: const Icon(
+                        Icons.edit_rounded,
+                        size: 14,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
-        ),
+          const SizedBox(height: 8),
+          Text(
+            file == null ? 'Add a photo (optional)' : 'Change photo',
+            style: TextStyle(
+              fontSize: 12,
+              color: AppTheme.primaryDark.withValues(alpha: 0.65),
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -59,11 +59,15 @@ function buildOpenAIContent(
   fileName: string,
   isPdf: boolean,
 ): unknown[] {
+  // Chat Completions API content-type names differ from the Responses API:
+  // PDFs use `file` (not `input_file`), images use `image_url`.
   const filePart = isPdf
     ? {
-        type: 'input_file',
-        filename: fileName,
-        file_data: `data:application/pdf;base64,${base64}`,
+        type: 'file',
+        file: {
+          filename: fileName,
+          file_data: `data:application/pdf;base64,${base64}`,
+        },
       }
     : {
         type: 'image_url',
@@ -86,8 +90,10 @@ Deno.serve(async (req) => {
       storage_path: string
       file_type: string
       file_name: string
+      notes?: string | null
     }
     const { id, user_id, storage_path, file_type, file_name } = record
+    const userNotes = (record.notes ?? '').trim()
     fileId = id
 
     // ── 2. Download file from Storage ─────────────────────────
@@ -165,6 +171,17 @@ Deno.serve(async (req) => {
       .join(' ')
 
     const chunks = chunkText(combinedText, 500)
+
+    // Surface user-provided notes as their own chunk so RAG can find queries
+    // like "what did I write about this file?" alongside the model summary.
+    // Format chosen so the chat LLM can cite the date + filename when it
+    // matches future symptom questions.
+    if (userNotes) {
+      const today = new Date().toISOString().split('T')[0]
+      chunks.unshift(
+        `Patient's own symptom notes (uploaded ${today}) attached to file "${file_name}": ${userNotes}`,
+      )
+    }
 
     // ── 7. Embed each chunk and insert into ai_chunks ─────────
     for (const chunk of chunks) {

@@ -12,6 +12,8 @@ Thumbs.db
 !.env.example
 *.pem
 *.key
+secrets.local.md
+secrets.local.*
 
 # Flutter / Dart
 **/.dart_tool/

@@ -6,28 +6,71 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../shared/models/chat_message.dart';
+import '../../../shared/models/conversation.dart';
 import '../../../supabase_config.dart';
 import '../../auth/providers/auth_provider.dart';
 
-/// Live persisted chat history from `chat_messages` — pushed by Supabase
-/// Realtime, ordered chronologically. The chat edge function inserts both
-/// the user and assistant rows after the stream completes, so this stream
-/// naturally absorbs the conversation once the AI responds.
-final chatMessagesStreamProvider =
-    StreamProvider.autoDispose<List<ChatMessage>>((ref) {
+// ── Conversations stream ─────────────────────────────────────────────────────
+
+/// Live list of conversations for the signed-in user, newest first.
+final conversationsStreamProvider =
+    StreamProvider.autoDispose<List<Conversation>>((ref) {
   final client = ref.watch(supabaseClientProvider);
   final user = client.auth.currentUser;
   if (user == null) return Stream.value(const []);
   return client
-      .from('chat_messages')
+      .from('conversations')
       .stream(primaryKey: ['id'])
       .eq('user_id', user.id)
-      .order('created_at')
-      .map((rows) => rows.map(ChatMessage.fromJson).toList());
+      .order('updated_at')
+      .map((rows) {
+    final list = rows.map(Conversation.fromJson).toList()
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return list;
+  });
 });
 
-/// In-flight state for the chat composer: an optimistic user bubble while
-/// the edge function is responding, plus the streaming token buffer.
+/// Currently selected conversation id. null = "use latest, or create one
+/// when the user sends a message". Set by the header buttons.
+final activeConversationIdProvider = StateProvider<String?>((_) => null);
+
+/// Convenience: the active conversation id resolved against the live list.
+/// If null, falls back to the most recent conversation; if none exist, null.
+final effectiveConversationIdProvider = Provider.autoDispose<String?>((ref) {
+  final explicit = ref.watch(activeConversationIdProvider);
+  if (explicit != null) return explicit;
+  final list = ref.watch(conversationsStreamProvider).value ?? const [];
+  return list.isEmpty ? null : list.first.id;
+});
+
+// ── Messages stream (scoped to active conversation) ──────────────────────────
+
+final chatMessagesStreamProvider =
+    StreamProvider.autoDispose<List<ChatMessage>>((ref) {
+  final client = ref.watch(supabaseClientProvider);
+  final user = client.auth.currentUser;
+  final convId = ref.watch(effectiveConversationIdProvider);
+  if (user == null || convId == null) return Stream.value(const []);
+  return client
+      .from('chat_messages')
+      .stream(primaryKey: ['id'])
+      .eq('conversation_id', convId)
+      .order('created_at')
+      .map((rows) {
+    final list = rows.map(ChatMessage.fromJson).toList()
+      ..sort((a, b) {
+        final cmp = a.createdAt.compareTo(b.createdAt);
+        if (cmp != 0) return cmp;
+        if (a.role == 'user' && b.role != 'user') return -1;
+        if (a.role != 'user' && b.role == 'user') return 1;
+        return a.id.compareTo(b.id);
+      });
+    return list;
+  });
+});
+
+// ── Live composer state (optimistic + streaming) ────────────────────────────
+
 class ChatLive {
   final ChatMessage? optimisticUser;
   final bool isStreaming;
@@ -59,16 +102,49 @@ class ChatLive {
 }
 
 class ChatNotifier extends StateNotifier<ChatLive> {
+  final Ref _ref;
   final SupabaseClient _client;
   final Dio _dio;
   CancelToken? _cancel;
 
-  ChatNotifier(this._client)
+  ChatNotifier(this._ref, this._client)
       : _dio = Dio(BaseOptions(
           connectTimeout: const Duration(seconds: 20),
           receiveTimeout: const Duration(minutes: 2),
         )),
         super(const ChatLive());
+
+  /// Creates a new conversation row and switches the active id to it.
+  /// Returns the new conversation id (or null if not signed in).
+  Future<String?> startNewConversation({String? title}) async {
+    final user = _client.auth.currentUser;
+    if (user == null) return null;
+    _cancel?.cancel('switching-conversation');
+    state = const ChatLive();
+    final inserted = await _client
+        .from('conversations')
+        .insert({'user_id': user.id, 'title': title})
+        .select('id')
+        .single();
+    final id = inserted['id'] as String;
+    _ref.read(activeConversationIdProvider.notifier).state = id;
+    return id;
+  }
+
+  /// Switch to an existing conversation (no insert).
+  void switchTo(String conversationId) {
+    _cancel?.cancel('switching-conversation');
+    state = const ChatLive();
+    _ref.read(activeConversationIdProvider.notifier).state = conversationId;
+  }
+
+  /// Ensures there's an active conversation to write into, creating one on
+  /// demand the first time the user types in a fresh session.
+  Future<String?> _ensureConversation() async {
+    final existing = _ref.read(effectiveConversationIdProvider);
+    if (existing != null) return existing;
+    return startNewConversation();
+  }
 
   Future<void> sendMessage({
     required String userId,
@@ -78,11 +154,13 @@ class ChatNotifier extends StateNotifier<ChatLive> {
     final trimmed = message.trim();
     if (trimmed.isEmpty || state.isStreaming) return;
 
-    // 1. Optimistic user bubble — held in ChatLive until the stream
-    //    re-emits with the persisted DB row.
+    final convId = await _ensureConversation();
+    if (convId == null) return;
+
     final optimistic = ChatMessage(
       id: 'local-${DateTime.now().microsecondsSinceEpoch}',
       userId: userId,
+      conversationId: convId,
       role: 'user',
       content: trimmed,
       createdAt: DateTime.now(),
@@ -107,6 +185,7 @@ class ChatNotifier extends StateNotifier<ChatLive> {
         '$supabaseUrl/functions/v1/chat',
         data: {
           'user_id': userId,
+          'conversation_id': convId,
           'message': trimmed,
           'history': history,
         },
@@ -151,14 +230,10 @@ class ChatNotifier extends StateNotifier<ChatLive> {
                 buffer.write(tok);
                 state = state.copyWith(streamingBuffer: buffer.toString());
               }
-            } catch (_) {
-              // skip malformed events
-            }
+            } catch (_) {/* skip malformed */}
           }
         }
       }
-
-      // Stream closed without [DONE].
       _finalize();
     } on DioException catch (e) {
       if (CancelToken.isCancel(e)) {
@@ -171,8 +246,6 @@ class ChatNotifier extends StateNotifier<ChatLive> {
     }
   }
 
-  /// Drop the in-flight buffer & optimistic message. The persisted stream
-  /// will deliver the real DB rows for both user + assistant turns.
   void _finalize() {
     state = const ChatLive();
   }
@@ -191,9 +264,28 @@ class ChatNotifier extends StateNotifier<ChatLive> {
   }
 
   void clearError() => state = state.copyWith(clearError: true);
-
-  /// Wipes the local in-flight state. Persisted history isn't affected.
   void clearLocal() => state = const ChatLive();
+
+  /// Deletes the currently-active conversation entirely (its messages cascade
+  /// because of the FK). Falls back to no active conversation; the next send
+  /// will create a fresh one.
+  Future<void> deleteActiveConversation() async {
+    final convId = _ref.read(effectiveConversationIdProvider);
+    if (convId == null) return;
+    _cancel?.cancel('clear-history');
+    state = const ChatLive();
+    _ref.read(activeConversationIdProvider.notifier).state = null;
+    await _client.from('conversations').delete().eq('id', convId);
+  }
+
+  /// Renames a conversation (used for titling once we have first user
+  /// message context).
+  Future<void> renameConversation(String conversationId, String title) async {
+    await _client
+        .from('conversations')
+        .update({'title': title, 'updated_at': DateTime.now().toIso8601String()})
+        .eq('id', conversationId);
+  }
 
   @override
   void dispose() {
@@ -204,5 +296,5 @@ class ChatNotifier extends StateNotifier<ChatLive> {
 }
 
 final chatProvider = StateNotifierProvider<ChatNotifier, ChatLive>(
-  (ref) => ChatNotifier(ref.watch(supabaseClientProvider)),
+  (ref) => ChatNotifier(ref, ref.watch(supabaseClientProvider)),
 );

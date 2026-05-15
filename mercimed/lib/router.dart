@@ -31,6 +31,42 @@ class _AuthChangeNotifier extends ChangeNotifier {
 
 final _authNotifier = _AuthChangeNotifier();
 
+/// Default page transition for the whole app: a sequenced fade-through.
+///
+/// The outgoing screen fades out in the first half, the incoming screen
+/// fades in in the second half — so the two never overlap visually. The
+/// shared animated background remains visible through the brief gap, which
+/// reads as a clean cross-dissolve instead of two transparent screens
+/// stacked on top of each other.
+CustomTransitionPage<void> _fadePage(GoRouterState state, Widget child) {
+  return CustomTransitionPage<void>(
+    key: state.pageKey,
+    child: child,
+    transitionDuration: const Duration(milliseconds: 260),
+    reverseTransitionDuration: const Duration(milliseconds: 220),
+    transitionsBuilder: (_, animation, secondaryAnimation, child) {
+      // Incoming: invisible until halfway, then fades in.
+      final fadeIn = CurvedAnimation(
+        parent: animation,
+        curve: const Interval(0.5, 1.0, curve: Curves.easeOut),
+      );
+      // Outgoing: fully visible until halfway, then fades out.
+      final fadeOut = CurvedAnimation(
+        parent: secondaryAnimation,
+        curve: const Interval(0.0, 0.5, curve: Curves.easeIn),
+      );
+      return AnimatedBuilder(
+        animation: Listenable.merge([animation, secondaryAnimation]),
+        builder: (_, _) {
+          final opacity = fadeIn.value * (1.0 - fadeOut.value);
+          return Opacity(opacity: opacity, child: child);
+        },
+        child: child,
+      );
+    },
+  );
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/home',
@@ -45,26 +81,48 @@ final routerProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
-      GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
-      GoRoute(path: '/register', builder: (_, _) => const RegisterScreen()),
+      GoRoute(
+        path: '/login',
+        pageBuilder: (_, state) => _fadePage(state, const LoginScreen()),
+      ),
+      GoRoute(
+        path: '/register',
+        pageBuilder: (_, state) => _fadePage(state, const RegisterScreen()),
+      ),
       ShellRoute(
         builder: (context, state, child) =>
-            MainShell(location: state.matchedLocation, child: child),
+            MainShell(location: state.uri.path, child: child),
         routes: [
-          GoRoute(path: '/home', builder: (_, _) => const HomeScreen()),
+          GoRoute(
+            path: '/home',
+            pageBuilder: (_, state) => _fadePage(state, const HomeScreen()),
+          ),
           GoRoute(
             path: '/folder/:id',
-            builder: (_, state) =>
-                FolderScreen(folderId: state.pathParameters['id']!),
+            pageBuilder: (_, state) => _fadePage(
+              state,
+              FolderScreen(folderId: state.pathParameters['id']!),
+            ),
           ),
           GoRoute(
             path: '/file/:id',
-            builder: (_, state) =>
-                FileDetailScreen(fileId: state.pathParameters['id']!),
+            pageBuilder: (_, state) => _fadePage(
+              state,
+              FileDetailScreen(fileId: state.pathParameters['id']!),
+            ),
           ),
-          GoRoute(path: '/chat', builder: (_, _) => const ChatScreen()),
-          GoRoute(path: '/family', builder: (_, _) => const FamilyScreen()),
-          GoRoute(path: '/profile', builder: (_, _) => const ProfileScreen()),
+          GoRoute(
+            path: '/chat',
+            pageBuilder: (_, state) => _fadePage(state, const ChatScreen()),
+          ),
+          GoRoute(
+            path: '/family',
+            pageBuilder: (_, state) => _fadePage(state, const FamilyScreen()),
+          ),
+          GoRoute(
+            path: '/profile',
+            pageBuilder: (_, state) => _fadePage(state, const ProfileScreen()),
+          ),
         ],
       ),
     ],

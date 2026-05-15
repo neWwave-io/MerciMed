@@ -4,6 +4,10 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>MerciMed uses the microphone so you can dictate questions to Mercie instead of typing.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>MerciMed transcribes your voice into text so you can chat with Mercie hands-free.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

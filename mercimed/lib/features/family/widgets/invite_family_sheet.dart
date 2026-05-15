@@ -63,9 +63,13 @@ class _InviteFamilySheetState extends ConsumerState<_InviteFamilySheet> {
 
   @override
   Widget build(BuildContext context) {
-    final bottom = MediaQuery.viewInsetsOf(context).bottom;
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+    // When the keyboard is up its own inset is bigger than the nav clearance,
+    // so just use it. When the keyboard is down we still need to push the
+    // Send button above the floating glass nav (~100px including safe area).
+    final bottomGap = keyboard > 0 ? keyboard : 100.0;
     return Padding(
-      padding: EdgeInsets.only(bottom: bottom),
+      padding: EdgeInsets.only(bottom: bottomGap),
       child: Container(
         decoration: const BoxDecoration(
           color: Color(0xFFF6FAF8),

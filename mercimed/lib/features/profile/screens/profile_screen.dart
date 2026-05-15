@@ -1,5 +1,6 @@
 import 'dart:ui' show ImageFilter;
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -89,27 +90,17 @@ class ProfileScreen extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 140),
       children: [
         // ── Top bar ───────────────────────────────────────────────
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 12, 0, 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const Text(
-                'Profile',
-                style: TextStyle(
-                  color: AppTheme.primaryDark,
-                  fontSize: 32,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.6,
-                  height: 1.15,
-                ),
-              ),
-              const Spacer(),
-              _GlassCircleButton(
-                icon: Icons.light_mode_rounded,
-                onTap: () {},
-              ),
-            ],
+        const Padding(
+          padding: EdgeInsets.fromLTRB(4, 12, 0, 12),
+          child: Text(
+            'Profile',
+            style: TextStyle(
+              color: AppTheme.primaryDark,
+              fontSize: 32,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.6,
+              height: 1.15,
+            ),
           ),
         ),
 
@@ -123,22 +114,9 @@ class ProfileScreen extends ConsumerWidget {
             children: [
               Row(
                 children: [
-                  Container(
-                    width: 72,
-                    height: 72,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFE1EFEC),
-                      shape: BoxShape.circle,
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      initial,
-                      style: const TextStyle(
-                        color: AppTheme.primaryDark,
-                        fontSize: 28,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
+                  _ProfileAvatar(
+                    initial: initial,
+                    url: profile?.avatarUrl,
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -327,64 +305,131 @@ class _GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(radius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.78),
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.85),
-              width: 1,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 14,
-                offset: const Offset(0, 3),
-              ),
-            ],
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(radius),
+        boxShadow: [
+          // Soft drop — grounds the card on the gradient.
+          BoxShadow(
+            color: AppTheme.primaryDark.withValues(alpha: 0.08),
+            blurRadius: 24,
+            spreadRadius: -2,
+            offset: const Offset(0, 10),
           ),
-          padding: padding,
-          child: child,
+          // Subtle top lift — sells the floating glass.
+          BoxShadow(
+            color: Colors.white.withValues(alpha: 0.5),
+            blurRadius: 14,
+            spreadRadius: -6,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.white.withValues(alpha: 0.62),
+                  Colors.white.withValues(alpha: 0.38),
+                ],
+              ),
+            ),
+            padding: padding,
+            child: child,
+          ),
         ),
       ),
     );
   }
 }
 
-// ── Glass circle button ────────────────────────────────────────────────────────
+// ── Profile avatar (glass circle, shows photo if uploaded) ─────────────────────
 
-class _GlassCircleButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
+class _ProfileAvatar extends StatelessWidget {
+  final String initial;
+  final String? url;
 
-  const _GlassCircleButton({required this.icon, required this.onTap});
+  const _ProfileAvatar({required this.initial, this.url});
 
   @override
   Widget build(BuildContext context) {
-    return ClipOval(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Material(
-          color: Colors.white.withValues(alpha: 0.7),
-          shape: const CircleBorder(
-            side: BorderSide(color: Colors.white, width: 1),
-          ),
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            onTap: onTap,
-            child: SizedBox(
-              width: 44,
-              height: 44,
-              child: Icon(
-                icon,
-                size: 22,
-                color: AppTheme.primaryDark,
-              ),
+    const size = 72.0;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primaryDark.withValues(alpha: 0.10),
+                  blurRadius: 18,
+                  spreadRadius: -2,
+                  offset: const Offset(0, 6),
+                ),
+                BoxShadow(
+                  color: Colors.white.withValues(alpha: 0.45),
+                  blurRadius: 12,
+                  spreadRadius: -4,
+                  offset: const Offset(0, -2),
+                ),
+              ],
             ),
+          ),
+          ClipOval(
+            child: (url != null && url!.isNotEmpty)
+                ? CachedNetworkImage(
+                    imageUrl: url!,
+                    width: size,
+                    height: size,
+                    fit: BoxFit.cover,
+                    placeholder: (_, _) => _glassFallback(initial),
+                    errorWidget: (_, _, _) => _glassFallback(initial),
+                  )
+                : _glassFallback(initial),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _glassFallback(String initial) {
+    const size = 72.0;
+    return BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.white.withValues(alpha: 0.55),
+              Colors.white.withValues(alpha: 0.28),
+            ],
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color: AppTheme.primaryDark,
+            fontSize: 28,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),

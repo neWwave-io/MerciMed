@@ -5,6 +5,7 @@ class Profile {
   final DateTime? dateOfBirth;
   final String? gender;
   final String? phone;
+  final String? avatarUrl;
   final DateTime createdAt;
 
   const Profile({
@@ -14,6 +15,7 @@ class Profile {
     this.dateOfBirth,
     this.gender,
     this.phone,
+    this.avatarUrl,
     required this.createdAt,
   });
 
@@ -26,6 +28,7 @@ class Profile {
             : null,
         gender: json['gender'] as String?,
         phone: json['phone'] as String?,
+        avatarUrl: json['avatar_url'] as String?,
         createdAt: DateTime.parse(json['created_at'] as String),
       );
 
@@ -36,6 +39,7 @@ class Profile {
         'date_of_birth': dateOfBirth?.toIso8601String().split('T').first,
         'gender': gender,
         'phone': phone,
+        'avatar_url': avatarUrl,
         'created_at': createdAt.toIso8601String(),
       };
 
@@ -45,6 +49,7 @@ class Profile {
     DateTime? dateOfBirth,
     String? gender,
     String? phone,
+    String? avatarUrl,
   }) =>
       Profile(
         id: id,
@@ -53,6 +58,7 @@ class Profile {
         dateOfBirth: dateOfBirth ?? this.dateOfBirth,
         gender: gender ?? this.gender,
         phone: phone ?? this.phone,
+        avatarUrl: avatarUrl ?? this.avatarUrl,
         createdAt: createdAt,
       );
 }

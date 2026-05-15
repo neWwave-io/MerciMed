@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -247,30 +249,58 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 class _BrandMark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 56,
-      height: 56,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
+    const size = 72.0;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Frosted glass disc — refracts the bubbles behind it.
+          ClipOval(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+              child: Container(
+                width: size,
+                height: size,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  // Very faint top-down sheen — keeps it readable as glass
+                  // without an obvious border.
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.white.withValues(alpha: 0.32),
+                      Colors.white.withValues(alpha: 0.12),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // The "m" sits on top of the glass.
+          ShaderMask(
+            shaderCallback: (rect) => LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                AppTheme.primaryDark,
+                AppTheme.primaryDark.withValues(alpha: 0.82),
+              ],
+            ).createShader(rect),
+            child: const Text(
+              'm',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 38,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.8,
+                height: 1,
+              ),
+            ),
           ),
         ],
-      ),
-      child: Center(
-        child: Text(
-          'm',
-          style: TextStyle(
-            color: AppTheme.primaryDark,
-            fontSize: 28,
-            fontWeight: FontWeight.w800,
-            height: 1,
-          ),
-        ),
       ),
     );
   }
