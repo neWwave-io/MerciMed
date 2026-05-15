@@ -1,3 +1,15 @@
+// Hand-written FileModel. snake_case in JSON/DB, camelCase in Dart.
+//
+// Bridges:
+//   • fromJson / toJson  — Supabase REST + Realtime payloads.
+//   • fromDriftRow / toDriftCompanion — local drift cache (see
+//     lib/shared/cache/local_db.dart). Drift is the ONE place codegen is
+//     allowed in this repo; everywhere else we keep manual serialisation.
+
+import 'package:drift/drift.dart' show Value;
+
+import '../cache/local_db.dart';
+
 class FileModel {
   final String id;
   final String userId;
@@ -48,4 +60,62 @@ class FileModel {
         'ai_scan_status': aiScanStatus,
         'created_at': createdAt.toIso8601String(),
       };
+
+  /// Construct from a drift row (`DriftFileRow` is the generated data class
+  /// for the [Files] table — see local_db.dart).
+  factory FileModel.fromDriftRow(DriftFileRow r) => FileModel(
+        id: r.id,
+        userId: r.userId,
+        folderId: r.folderId,
+        fileName: r.fileName,
+        fileType: r.fileType,
+        storagePath: r.storagePath,
+        extractedText: r.extractedText,
+        notes: r.notes,
+        aiScanStatus: r.aiScanStatus,
+        createdAt: r.createdAt,
+      );
+
+  /// Build a drift insert companion. The `dirty` flag is left at the column
+  /// default (`false`) for server-originated writes; the outbox flow sets it
+  /// to `true` explicitly when persisting an offline mutation.
+  FilesCompanion toDriftCompanion({bool dirty = false}) =>
+      FilesCompanion.insert(
+        id: id,
+        userId: userId,
+        folderId: Value(folderId),
+        fileName: fileName,
+        fileType: Value(fileType),
+        storagePath: storagePath,
+        extractedText: Value(extractedText),
+        notes: Value(notes),
+        aiScanStatus: Value(aiScanStatus),
+        createdAt: createdAt,
+        dirty: Value(dirty),
+      );
+
+  FileModel copyWith({
+    String? id,
+    String? userId,
+    String? folderId,
+    String? fileName,
+    String? fileType,
+    String? storagePath,
+    String? extractedText,
+    String? notes,
+    String? aiScanStatus,
+    DateTime? createdAt,
+  }) =>
+      FileModel(
+        id: id ?? this.id,
+        userId: userId ?? this.userId,
+        folderId: folderId ?? this.folderId,
+        fileName: fileName ?? this.fileName,
+        fileType: fileType ?? this.fileType,
+        storagePath: storagePath ?? this.storagePath,
+        extractedText: extractedText ?? this.extractedText,
+        notes: notes ?? this.notes,
+        aiScanStatus: aiScanStatus ?? this.aiScanStatus,
+        createdAt: createdAt ?? this.createdAt,
+      );
 }

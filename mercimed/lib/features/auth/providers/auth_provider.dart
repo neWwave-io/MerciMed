@@ -1,8 +1,11 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mime/mime.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../../shared/cache/local_db.dart';
 
 final supabaseClientProvider = Provider<SupabaseClient>(
   (_) => Supabase.instance.client,
@@ -17,9 +20,10 @@ final currentUserProvider = Provider<User?>((ref) {
 });
 
 class AuthNotifier extends StateNotifier<AsyncValue<void>> {
+  final Ref _ref;
   final SupabaseClient _client;
 
-  AuthNotifier(this._client) : super(const AsyncValue.data(null));
+  AuthNotifier(this._ref, this._client) : super(const AsyncValue.data(null));
 
   Future<void> login(String email, String password) async {
     state = const AsyncValue.loading();
@@ -72,12 +76,27 @@ class AuthNotifier extends StateNotifier<AsyncValue<void>> {
   }
 
   Future<void> logout() async {
+    // Capture the current user id BEFORE signOut — afterwards
+    // `currentUser` is null and we can't scope the wipe.
+    final ownerId = _client.auth.currentUser?.id;
     state = const AsyncValue.loading();
-    state = await AsyncValue.guard(() => _client.auth.signOut());
+    state = await AsyncValue.guard(() async {
+      await _client.auth.signOut();
+      if (ownerId != null) {
+        try {
+          await _ref.read(localDbProvider).wipeOwner(ownerId);
+        } catch (e, st) {
+          // Cache wipe failure shouldn't block the sign-out itself —
+          // worst case the next user sees stale cached rows until their
+          // own hydration overwrites them.
+          debugPrint('wipeOwner failed: $e\n$st');
+        }
+      }
+    });
   }
 }
 
 final authNotifierProvider =
     StateNotifierProvider<AuthNotifier, AsyncValue<void>>(
-  (ref) => AuthNotifier(ref.watch(supabaseClientProvider)),
+  (ref) => AuthNotifier(ref, ref.watch(supabaseClientProvider)),
 );

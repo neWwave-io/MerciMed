@@ -15,15 +15,19 @@ import '../../../features/files/providers/files_provider.dart';
 import '../../../shared/models/chat_message.dart';
 import '../../../shared/models/conversation.dart';
 import '../../../shared/models/file_model.dart';
+import '../../../shared/providers/connectivity_provider.dart';
 import '../../../shared/theme/app_theme.dart';
 import '../providers/chat_provider.dart';
 
+/// Conversations list — promoted from a draggable bottom sheet to a
+/// full-screen modal route so it gets the whole viewport (and no longer
+/// overlaps the Merci nav pill).
 Future<void> _openConversationsSheet(BuildContext context, WidgetRef ref) {
-  return showModalBottomSheet<void>(
-    context: context,
-    backgroundColor: Colors.transparent,
-    isScrollControlled: true,
-    builder: (_) => const _ConversationsSheet(),
+  return Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => const _ConversationsSheet(),
+    ),
   );
 }
 
@@ -44,60 +48,44 @@ class _ConversationsSheet extends ConsumerWidget {
     final convs = ref.watch(conversationsStreamProvider).value ?? const <Conversation>[];
     final activeId = ref.watch(effectiveConversationIdProvider);
 
-    return DraggableScrollableSheet(
-      initialChildSize: 0.6,
-      minChildSize: 0.35,
-      maxChildSize: 0.9,
-      builder: (_, scrollCtrl) => ClipRRect(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.85),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.7),
-                width: 1,
-              ),
-            ),
-            child: Column(
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6FAF8),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF6FAF8),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          tooltip: 'Close',
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.close_rounded),
+        ),
+        title: const Text(
+          'Conversations',
+          style: TextStyle(
+            color: AppTheme.primaryDark,
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.3,
+          ),
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () async {
+              await ref
+                  .read(chatProvider.notifier)
+                  .startNewConversation();
+              if (context.mounted) Navigator.pop(context);
+            },
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('New'),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: SafeArea(
+        top: false,
+        child: Column(
               children: [
-                const SizedBox(height: 10),
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFCBD5E0),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 16, 16, 8),
-                  child: Row(
-                    children: [
-                      const Text(
-                        'Conversations',
-                        style: TextStyle(
-                          color: AppTheme.primaryDark,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.3,
-                        ),
-                      ),
-                      const Spacer(),
-                      TextButton.icon(
-                        onPressed: () async {
-                          await ref
-                              .read(chatProvider.notifier)
-                              .startNewConversation();
-                          if (context.mounted) Navigator.pop(context);
-                        },
-                        icon: const Icon(Icons.add_rounded, size: 18),
-                        label: const Text('New'),
-                      ),
-                    ],
-                  ),
-                ),
                 Expanded(
                   child: convs.isEmpty
                       ? const Center(
@@ -114,9 +102,8 @@ class _ConversationsSheet extends ConsumerWidget {
                           ),
                         )
                       : ListView.separated(
-                          controller: scrollCtrl,
                           padding:
-                              const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                              const EdgeInsets.fromLTRB(20, 12, 20, 24),
                           itemCount: convs.length,
                           separatorBuilder: (_, _) =>
                               const SizedBox(height: 8),
@@ -261,8 +248,6 @@ class _ConversationsSheet extends ConsumerWidget {
                 ),
               ],
             ),
-          ),
-        ),
       ),
     );
   }
@@ -528,6 +513,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _send() async {
+    if (!ref.read(isOnlineProvider)) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            "You're offline — open conversations are read-only. Reconnect to send a message.",
+          ),
+        ));
+      return;
+    }
+
     final typed = _inputCtrl.text.trim();
     final atts = _pendingAttachments;
     if (typed.isEmpty && atts.isEmpty) return;
@@ -556,6 +553,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final persisted = persistedAsync.value ?? const <ChatMessage>[];
     final filesAsync = ref.watch(ownerFilesStreamProvider);
     final allFiles = filesAsync.value ?? const <FileModel>[];
+    final online = ref.watch(isOnlineProvider);
 
     // Auto-scroll when either persisted history grows or a token arrives.
     ref.listen<ChatLive>(chatProvider, (_, _) {
@@ -598,7 +596,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               onAddFile: _pickAndUpload,
               onMic: _toggleVoice,
               listening: _listening,
-              disabled: live.isStreaming,
+              // Offline disables the bar so the send button greys out
+              // and the textfield won't accept new typing — keeps the
+              // UX honest with the "read-only when offline" contract.
+              disabled: live.isStreaming || !online,
               attachments: _pendingAttachments,
               onRemoveAttachment: _removeAttachment,
             ),
@@ -1458,11 +1459,13 @@ class _FileRefsRow extends StatelessWidget {
   static const int _inlineMax = 3;
 
   Future<void> _openAll(BuildContext context) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => _AllFilesSheet(files: files),
+    // Promoted to a full-screen route — the file grid needs the full viewport
+    // and the modal covers the Merci nav pill so there's no overlap math.
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _AllFilesSheet(files: files),
+      ),
     );
   }
 
@@ -1587,61 +1590,34 @@ class _AllFilesSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      initialChildSize: 0.55,
-      minChildSize: 0.4,
-      maxChildSize: 0.9,
-      builder: (_, scrollCtrl) => ClipRRect(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.78),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.7),
-                width: 1,
-              ),
-            ),
-            child: Column(
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6FAF8),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF6FAF8),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          tooltip: 'Close',
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.close_rounded),
+        ),
+        title: Text(
+          'Referenced files (${files.length})',
+          style: const TextStyle(
+            color: AppTheme.primaryDark,
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.3,
+          ),
+        ),
+      ),
+      body: SafeArea(
+        top: false,
+        child: Column(
               children: [
-                const SizedBox(height: 10),
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFCBD5E0),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
-                  child: Row(
-                    children: [
-                      Text(
-                        'Referenced files (${files.length})',
-                        style: const TextStyle(
-                          color: AppTheme.primaryDark,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.3,
-                        ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(
-                          Icons.close_rounded,
-                          color: AppTheme.primaryDark,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
                 Expanded(
                   child: ListView.separated(
-                    controller: scrollCtrl,
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
                     itemCount: files.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 10),
                     itemBuilder: (_, i) {
@@ -1737,8 +1713,6 @@ class _AllFilesSheet extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-        ),
       ),
     );
   }
@@ -1905,7 +1879,8 @@ class _ChatInputBar extends StatelessWidget {
                 _SendOrMicButton(
                   hasText: hasText,
                   listening: listening,
-                  onTap: hasText ? onSend : onMic,
+                  disabled: disabled,
+                  onTap: disabled ? null : (hasText ? onSend : onMic),
                 ),
               ],
             ),
@@ -2024,19 +1999,21 @@ class _PendingAttachmentChip extends StatelessWidget {
 class _SendOrMicButton extends StatelessWidget {
   final bool hasText;
   final bool listening;
-  final VoidCallback onTap;
+  final bool disabled;
+  final VoidCallback? onTap;
 
   const _SendOrMicButton({
     required this.hasText,
     required this.listening,
     required this.onTap,
+    this.disabled = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final fill = listening
-        ? const Color(0xFFD64B4B)
-        : const Color(0xFF1A212B);
+    final fill = disabled
+        ? const Color(0xFFB0BAC4)
+        : (listening ? const Color(0xFFD64B4B) : const Color(0xFF1A212B));
     return Material(
       color: Colors.transparent,
       child: InkWell(

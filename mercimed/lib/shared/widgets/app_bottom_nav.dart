@@ -87,6 +87,11 @@ class AppBottomNav extends StatelessWidget {
 
 // ── MERCI (AI) button ───────────────────────────────────────────────────────
 
+// MASCOT SWAP POINT: when artwork arrives, replace the sparkle Icon (in
+// `_MerciAvatar` below) with either `SvgPicture.asset(assetPath)` for a
+// static mark or a `Rive` widget for the idle-breathe + tap-bloom animation.
+// Brief: see docs/MASCOT_BRIEF.md.
+
 class _MercieButton extends StatefulWidget {
   final double size;
   final bool isActive;
@@ -203,19 +208,7 @@ class _MercieButtonState extends State<_MercieButton>
                           width: 1,
                         ),
                       ),
-                      child: const Center(
-                        child: Icon(
-                          Icons.auto_awesome_rounded,
-                          color: Colors.white,
-                          size: 24,
-                          shadows: [
-                            Shadow(
-                              color: Color(0x66FFFFFF),
-                              blurRadius: 8,
-                            ),
-                          ],
-                        ),
-                      ),
+                      child: const Center(child: _MerciAvatar()),
                     ),
                     // Tiny twinkling sparkle accent (top-right of orb).
                     Positioned(
@@ -284,6 +277,34 @@ class _MercieButtonState extends State<_MercieButton>
             const SizedBox(height: 6),
         ],
       ),
+    );
+  }
+}
+
+// ── Mascot avatar ───────────────────────────────────────────────────────────
+
+// MASCOT SWAP POINT: when artwork arrives, replace the sparkle Icon below with
+// either `SvgPicture.asset(assetPath)` (for a static mark) or a `Rive` widget
+// (for idle-breathe + tap-bloom). Keep the same 24px footprint so the FAB
+// layout stays unchanged. Brief: see docs/MASCOT_BRIEF.md.
+class _MerciAvatar extends StatelessWidget {
+  /// Optional asset path. When provided (post-artwork drop) swap the Icon
+  /// below for an SvgPicture/Rive widget pointing at this asset.
+  final String? assetPath;
+
+  // ignore: unused_element_parameter
+  const _MerciAvatar({this.assetPath});
+
+  @override
+  Widget build(BuildContext context) {
+    // Until artwork lands, render the sparkle icon at the original size.
+    return const Icon(
+      Icons.auto_awesome_rounded,
+      color: Colors.white,
+      size: 24,
+      shadows: [
+        Shadow(color: Color(0x66FFFFFF), blurRadius: 8),
+      ],
     );
   }
 }

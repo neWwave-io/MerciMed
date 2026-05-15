@@ -12,15 +12,18 @@ import '../../../features/auth/providers/auth_provider.dart';
 import '../../../shared/models/file_model.dart';
 import '../../../shared/models/folder.dart';
 import '../../../shared/theme/app_theme.dart';
+import '../../../shared/widgets/app_bottom_sheet.dart';
 import '../providers/files_provider.dart';
 
+// Mint-family palette aligned with AppTheme tokens. Match the order used in
+// home_screen.dart so the same folder gets the same color across the app.
 const _kFolderColors = [
-  Color(0xFFC26D6D),
-  Color(0xFF5A9A94),
-  Color(0xFFB5945A),
-  Color(0xFF5A8BA5),
-  Color(0xFF7B6B8A),
-  Color(0xFF5A8A6B),
+  Color(0xFF2D6B6B), // teal (primary)
+  Color(0xFF5A8A6B), // sage
+  Color(0xFF7BA8A8), // soft mint
+  Color(0xFF4A7B8B), // slate blue
+  Color(0xFF6BA591), // deep mint
+  Color(0xFF8AB0B0), // sky
 ];
 
 enum _DocFilter { all, pdf, image }
@@ -200,17 +203,22 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
   }
 
   Future<void> _showFolderMenu(Folder folder) async {
-    final action = await showModalBottomSheet<String>(
+    final action = await showAppBottomSheet<String>(
       context: context,
       backgroundColor: AppTheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      builder: (ctx) => SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
             const SizedBox(height: 8),
             Container(
               width: 36,
@@ -293,6 +301,7 @@ class _FolderScreenState extends ConsumerState<FolderScreen> {
             ),
             const SizedBox(height: 8),
           ],
+        ),
         ),
       ),
     );
@@ -1636,17 +1645,22 @@ class UploadPreviewDialogState extends ConsumerState<UploadPreviewDialog> {
   Future<void> _pickFolder() async {
     final folders = ref.read(foldersProvider(null)).value ?? const <Folder>[];
     if (folders.isEmpty) return;
-    final picked = await showModalBottomSheet<Folder>(
+    final picked = await showAppBottomSheet<Folder>(
       context: context,
       backgroundColor: AppTheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      builder: (ctx) => SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
             const SizedBox(height: 8),
             Container(
               width: 36,
@@ -1700,6 +1714,7 @@ class UploadPreviewDialogState extends ConsumerState<UploadPreviewDialog> {
             ),
             const SizedBox(height: 8),
           ],
+        ),
         ),
       ),
     );

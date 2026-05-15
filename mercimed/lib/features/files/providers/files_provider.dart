@@ -7,11 +7,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mime/mime.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:drift/drift.dart' show Value;
+
 import '../../../features/auth/providers/auth_provider.dart';
 import '../../../features/family/providers/family_provider.dart';
+import '../../../shared/cache/local_db.dart';
+import '../../../shared/cache/outbox.dart';
 import '../../../shared/models/file_model.dart';
 import '../../../shared/models/folder.dart';
 import '../../../shared/models/profile.dart';
+import '../../../shared/providers/connectivity_provider.dart';
 
 class FolderStats {
   final int fileCount;
@@ -32,27 +37,63 @@ final currentUserProfileProvider = FutureProvider<Profile?>((ref) async {
   return Profile.fromJson(data);
 });
 
-/// Live stream of ALL folders for the active owner. Client filters by
-/// parentId since Supabase `.stream()` only allows a single `.eq()` filter.
+/// Local-first stream of ALL folders for the active owner. Reads directly
+/// from the drift cache (`lib/shared/cache/local_db.dart`) so the list is
+/// available offline and during cold start before Supabase responds. Live
+/// reconciliation with the server happens in [_folderHydrationProvider]
+/// — UI providers below `.watch` both so hydration starts the moment any
+/// folder list is rendered.
+///
+/// Client-side filtering by parentId / isChat continues at the consumer
+/// providers ([foldersProvider], [chatFoldersProvider]).
 final _ownerFoldersStreamProvider =
     StreamProvider.autoDispose<List<Folder>>((ref) {
-  final client = ref.watch(supabaseClientProvider);
+  final db = ref.watch(localDbProvider);
   final ownerId = ref.watch(effectiveOwnerIdProvider);
   if (ownerId == null) return Stream.value(const []);
+  return db.watchFoldersForOwner(ownerId);
+});
 
-  return client
+/// Subscribes to the Supabase `folders` realtime stream and reconciles the
+/// drift cache: upserts the server snapshot and tombstones any local row
+/// missing from the snapshot UNLESS that row is `dirty` (has a pending
+/// outbox write). The provider has no value; consumers `.watch` it purely
+/// for the side-effect subscription. Cancelling the subscription when the
+/// last consumer goes away is handled by `ref.onDispose`.
+final _folderHydrationProvider = Provider.autoDispose<void>((ref) {
+  final client = ref.watch(supabaseClientProvider);
+  final db = ref.watch(localDbProvider);
+  final ownerId = ref.watch(effectiveOwnerIdProvider);
+  if (ownerId == null) return;
+
+  final sub = client
       .from('folders')
       .stream(primaryKey: ['id'])
       .eq('user_id', ownerId)
-      .order('created_at')
-      .map((rows) => rows.map(Folder.fromJson).toList());
+      .listen((rows) async {
+        try {
+          final folders =
+              rows.map<Folder>(Folder.fromJson).toList(growable: false);
+          await db.upsertFolders(folders);
+          await db.deleteFoldersNotIn(
+            ownerId: ownerId,
+            keepIds: folders.map((f) => f.id).toSet(),
+          );
+        } catch (e, st) {
+          // Swallow — the next emission will retry. Logging only so we can
+          // diagnose recurring reconciler failures.
+          debugPrint('folders hydration failed: $e\n$st');
+        }
+      });
+  ref.onDispose(sub.cancel);
 });
 
-/// Standard (non-chat) folders under a given parent (null = root).
-/// Reactively follows [_ownerFoldersStreamProvider]. Chat-auto-created
-/// folders are filtered out and shown separately via [chatFoldersProvider].
+/// Standard (non-chat) folders under a given parent (null = root). Reads
+/// the local drift cache and ensures the server→local reconciler is running
+/// while at least one folder list is on screen.
 final foldersProvider =
     Provider.autoDispose.family<AsyncValue<List<Folder>>, String?>((ref, parentId) {
+  ref.watch(_folderHydrationProvider); // start/keep the reconciler alive
   final all = ref.watch(_ownerFoldersStreamProvider);
   return all.whenData((folders) => folders
       .where((f) => f.parentFolderId == parentId && !f.isChat)
@@ -63,28 +104,59 @@ final foldersProvider =
 /// chat conversation. Surfaces in the home screen's "Chat Folders" section.
 final chatFoldersProvider =
     Provider.autoDispose<AsyncValue<List<Folder>>>((ref) {
+  ref.watch(_folderHydrationProvider);
   final all = ref.watch(_ownerFoldersStreamProvider);
   return all.whenData((folders) => folders.where((f) => f.isChat).toList());
 });
 
-/// Live stream of ALL files for the active owner. Used as the basis for
-/// both per-folder file lists and folder stats.
+/// Local-first stream of ALL files for the active owner. Reads from the
+/// drift cache so the list is available offline and during cold start.
+/// Live reconciliation with Supabase happens in [_fileHydrationProvider]
+/// — consumers below `.watch` it so hydration starts the moment any file
+/// view is rendered.
 final ownerFilesStreamProvider =
     StreamProvider.autoDispose<List<FileModel>>((ref) {
-  final client = ref.watch(supabaseClientProvider);
+  final db = ref.watch(localDbProvider);
   final ownerId = ref.watch(effectiveOwnerIdProvider);
   if (ownerId == null) return Stream.value(const []);
+  return db.watchFilesForOwner(ownerId);
+});
 
-  return client
+/// Subscribes to the Supabase `files` realtime stream and reconciles the
+/// drift cache. Mirrors the folder reconciler: upserts the server snapshot
+/// and tombstones any local row missing from the snapshot — but ONLY for
+/// rows where `dirty = false`. Dirty rows have pending outbox writes that
+/// haven't been acked yet; clobbering them would lose user edits.
+final _fileHydrationProvider = Provider.autoDispose<void>((ref) {
+  final client = ref.watch(supabaseClientProvider);
+  final db = ref.watch(localDbProvider);
+  final ownerId = ref.watch(effectiveOwnerIdProvider);
+  if (ownerId == null) return;
+
+  final sub = client
       .from('files')
       .stream(primaryKey: ['id'])
       .eq('user_id', ownerId)
-      .order('created_at', ascending: false)
-      .map((rows) => rows.map(FileModel.fromJson).toList());
+      .listen((rows) async {
+        try {
+          final list =
+              rows.map<FileModel>(FileModel.fromJson).toList(growable: false);
+          await db.upsertFiles(list);
+          await db.deleteFilesNotIn(
+            ownerId: ownerId,
+            keepIds: list.map((f) => f.id).toSet(),
+          );
+        } catch (e, st) {
+          // Swallow — the next emission will retry.
+          debugPrint('files hydration failed: $e\n$st');
+        }
+      });
+  ref.onDispose(sub.cancel);
 });
 
 final folderStatsProvider =
     Provider.autoDispose<AsyncValue<Map<String, FolderStats>>>((ref) {
+  ref.watch(_fileHydrationProvider); // keep reconciler alive
   final files = ref.watch(ownerFilesStreamProvider);
   return files.whenData((list) {
     final stats = <String, FolderStats>{};
@@ -112,17 +184,32 @@ final folderStatsProvider =
 /// Files inside a given folder (or root when folderId is null).
 final filesProvider =
     Provider.autoDispose.family<AsyncValue<List<FileModel>>, String?>((ref, folderId) {
+  ref.watch(_fileHydrationProvider); // keep reconciler alive
   final all = ref.watch(ownerFilesStreamProvider);
   return all.whenData(
     (files) => files.where((f) => f.folderId == folderId).toList(),
   );
 });
 
+/// Phase-2 contract: folder create/rename/delete still write directly to
+/// Supabase and have NO offline path. When offline, the notifier reports a
+/// human-readable error on `state` (the UI surfaces this as a SnackBar) and
+/// skips the local write entirely. This keeps the v1+v2 write contract
+/// simple: file-notes is the only mutation that survives offline.
+class OfflineMutationException implements Exception {
+  final String message;
+  const OfflineMutationException(this.message);
+  @override
+  String toString() => message;
+}
+
 class FolderNotifier extends StateNotifier<AsyncValue<void>> {
   final Ref _ref;
   final SupabaseClient _client;
 
   FolderNotifier(this._ref, this._client) : super(const AsyncValue.data(null));
+
+  bool get _online => _ref.read(isOnlineProvider);
 
   Future<void> create(
     String name, {
@@ -132,6 +219,15 @@ class FolderNotifier extends StateNotifier<AsyncValue<void>> {
   }) async {
     final user = _client.auth.currentUser;
     if (user == null) return;
+    if (!_online) {
+      state = AsyncValue.error(
+        const OfflineMutationException(
+          "You're offline — folder changes will sync when you're back online.",
+        ),
+        StackTrace.current,
+      );
+      return;
+    }
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() async {
       final trimmedNotes = notes?.trim();
@@ -156,6 +252,15 @@ class FolderNotifier extends StateNotifier<AsyncValue<void>> {
   }) async {
     final user = _client.auth.currentUser;
     if (user == null) return null;
+    if (!_online) {
+      state = AsyncValue.error(
+        const OfflineMutationException(
+          "You're offline — folder changes will sync when you're back online.",
+        ),
+        StackTrace.current,
+      );
+      return null;
+    }
     final conv = await _client
         .from('conversations')
         .select('folder_id')
@@ -184,6 +289,15 @@ class FolderNotifier extends StateNotifier<AsyncValue<void>> {
   Future<void> rename(String folderId, String newName) async {
     final trimmed = newName.trim();
     if (trimmed.isEmpty) return;
+    if (!_online) {
+      state = AsyncValue.error(
+        const OfflineMutationException(
+          "You're offline — folder changes will sync when you're back online.",
+        ),
+        StackTrace.current,
+      );
+      return;
+    }
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() async {
       await _client
@@ -197,6 +311,15 @@ class FolderNotifier extends StateNotifier<AsyncValue<void>> {
   /// Deletes a folder. Files inside are kept (folder_id set to null via FK
   /// ON DELETE SET NULL) so the user's data isn't lost.
   Future<void> delete(String folderId) async {
+    if (!_online) {
+      state = AsyncValue.error(
+        const OfflineMutationException(
+          "You're offline — folder changes will sync when you're back online.",
+        ),
+        StackTrace.current,
+      );
+      return;
+    }
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() async {
       await _client.from('folders').delete().eq('id', folderId);
@@ -264,9 +387,12 @@ class FileUploadDraft {
 }
 
 class UploadNotifier extends StateNotifier<UploadState> {
+  final Ref _ref;
   final SupabaseClient _client;
 
-  UploadNotifier(this._client) : super(const UploadState());
+  UploadNotifier(this._ref, this._client) : super(const UploadState());
+
+  bool get _online => _ref.read(isOnlineProvider);
 
   /// Picks a file and uploads it to the given folder. Returns the new
   /// file's id on success, or null if the user cancelled or it failed.
@@ -326,6 +452,68 @@ class UploadNotifier extends StateNotifier<UploadState> {
     );
   }
 
+  /// Picks one or more files from the system picker and returns one
+  /// [FileUploadDraft] per accepted entry. Mirrors [pickFile]'s validation
+  /// (size limit, mime detection) but allows multi-select for the
+  /// "Upload files" entry in the add-menu. Drafts that fail validation are
+  /// dropped silently from the returned list; if everything fails an error
+  /// message is exposed on `state` and `null` is returned.
+  Future<List<FileUploadDraft>?> pickFiles({bool allowMultiple = true}) async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      state = state.copyWith(errorMessage: 'Please sign in to upload.');
+      return null;
+    }
+
+    FilePickerResult? result;
+    try {
+      result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const [
+          'pdf', 'jpg', 'jpeg', 'png', 'heic', 'webp',
+        ],
+        allowMultiple: allowMultiple,
+        withData: false,
+      );
+    } catch (e, st) {
+      debugPrint('File picker (multi) failed: $e\n$st');
+      state = state.copyWith(errorMessage: 'Could not open the file picker: $e');
+      return null;
+    }
+    if (result == null || result.files.isEmpty) return null;
+
+    final drafts = <FileUploadDraft>[];
+    String? lastError;
+    for (final picked in result.files) {
+      if (picked.path == null) {
+        lastError = 'Could not read ${picked.name} (no path).';
+        continue;
+      }
+      final file = File(picked.path!);
+      final size = await file.length();
+      if (size > kMaxUploadBytes) {
+        lastError =
+            '${picked.name} is ${(size / 1024 / 1024).toStringAsFixed(1)} MB — over the 20 MB limit.';
+        continue;
+      }
+      final mimeType =
+          lookupMimeType(picked.name) ?? 'application/octet-stream';
+      drafts.add(FileUploadDraft(
+        file: file,
+        displayName: picked.name,
+        mimeType: mimeType,
+        sizeBytes: size,
+      ));
+    }
+    if (drafts.isEmpty) {
+      if (lastError != null) {
+        state = state.copyWith(errorMessage: lastError);
+      }
+      return null;
+    }
+    return drafts;
+  }
+
   /// Resets a failed (or completed) file back to `pending` and re-invokes the
   /// scan function. Used by the row-level "Retry" button.
   Future<void> retryScan(String fileId) async {
@@ -362,6 +550,15 @@ class UploadNotifier extends StateNotifier<UploadState> {
     required String displayName,
     String? notes,
   }) async {
+    if (!_online) {
+      state = state.copyWith(
+        isUploading: false,
+        errorMessage:
+            "You're offline — uploads will be available when you're back online.",
+        clearFileName: true,
+      );
+      return null;
+    }
     final dedupe = await _findExistingFile(
       folderId: folderId,
       displayName: displayName,
@@ -520,7 +717,7 @@ class UploadNotifier extends StateNotifier<UploadState> {
 
 final uploadNotifierProvider =
     StateNotifierProvider<UploadNotifier, UploadState>(
-  (ref) => UploadNotifier(ref.watch(supabaseClientProvider)),
+  (ref) => UploadNotifier(ref, ref.watch(supabaseClientProvider)),
 );
 
 // ── AI folder name suggestion ────────────────────────────────────────────────
@@ -585,23 +782,55 @@ Future<String> reviseNote(
 
 // ── File mutations ────────────────────────────────────────────────────────────
 
-/// Updates the notes field on a file row. Used by file detail screen with
-/// debouncing handled at the call site.
+/// Write-through update of `files.notes`.
+///
+/// Step 1 — local: write to drift immediately (marking `dirty = true`) so the
+/// UI reflects the new note via [ownerFilesStreamProvider] even offline.
+/// Step 2 — network: if online, attempt the Supabase update synchronously.
+/// On success we clear `dirty`. On failure (or offline) we enqueue an
+/// `update_file_notes` row in the outbox; the [OutboxWorker] drains it on
+/// the next connectivity flip with exponential backoff and LWW conflict
+/// resolution. Conflicts are surfaced on `outboxWorkerProvider.conflicts`.
+///
+/// Accepts either a `Ref` or a `WidgetRef` — both expose the `.read`
+/// surface this function needs.
 Future<void> updateFileNotes(
-  SupabaseClient client,
+  WidgetRef ref,
   String fileId,
   String notes,
-) {
-  return client
-      .from('files')
-      .update({'notes': notes}) // null-safe text column
-      .eq('id', fileId);
+) async {
+  final db = ref.read(localDbProvider);
+  final client = ref.read(supabaseClientProvider);
+  final online = ref.read(isOnlineProvider);
+  final worker = ref.read(outboxWorkerProvider);
+
+  // Step 1: local write. Drift watch re-emits → UI updates instantly.
+  await (db.update(db.files)..where((f) => f.id.equals(fileId))).write(
+    FilesCompanion(notes: Value(notes), dirty: const Value(true)),
+  );
+
+  if (!online) {
+    await worker.enqueueUpdateFileNotes(fileId: fileId, notes: notes);
+    return;
+  }
+
+  try {
+    await client.from('files').update({'notes': notes}).eq('id', fileId);
+    // Server acknowledged — drop the dirty flag so the reconciler can
+    // resume overwriting this row from server snapshots.
+    await (db.update(db.files)..where((f) => f.id.equals(fileId)))
+        .write(const FilesCompanion(dirty: Value(false)));
+  } catch (_) {
+    // Transient: defer to the outbox.
+    await worker.enqueueUpdateFileNotes(fileId: fileId, notes: notes);
+  }
 }
 
 /// Single-file lookup for the detail screen — derived from the same live
 /// stream so notes/scan-status updates appear immediately.
 final fileByIdProvider =
     Provider.autoDispose.family<AsyncValue<FileModel?>, String>((ref, id) {
+  ref.watch(_fileHydrationProvider); // keep reconciler alive
   final all = ref.watch(ownerFilesStreamProvider);
   return all.whenData((files) {
     for (final f in files) {

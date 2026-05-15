@@ -1,15 +1,16 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_pdfview/flutter_pdfview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../../features/auth/providers/auth_provider.dart';
+import '../../../shared/cache/blob_cache.dart';
+import '../../../shared/cache/outbox.dart';
 import '../../../shared/models/file_model.dart';
+import '../../../shared/providers/connectivity_provider.dart';
 import '../../../shared/theme/app_theme.dart';
 import '../providers/files_provider.dart';
 
@@ -26,15 +27,35 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
   Timer? _debounce;
   String _lastSaved = '';
   bool _seededNotes = false;
+  StreamSubscription<OutboxConflict>? _conflictSub;
+
+  @override
+  void initState() {
+    super.initState();
+    // Surface outbox conflicts as a toast while the detail screen is open.
+    // The worker's stream is broadcast, so safe to subscribe from multiple
+    // detail screens over time.
+    _conflictSub = ref.read(outboxWorkerProvider).conflicts.listen((c) {
+      if (!mounted) return;
+      if (c.entityId != widget.fileId) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(
+          backgroundColor: const Color(0xFFD64B4B),
+          behavior: SnackBarBehavior.floating,
+          content: Text(c.message, style: const TextStyle(color: Colors.white)),
+        ));
+    });
+  }
 
   @override
   void dispose() {
+    _conflictSub?.cancel();
     _debounce?.cancel();
     final pending = _notesCtrl.text;
     if (pending != _lastSaved) {
-      // Best-effort save on close.
-      final client = ref.read(supabaseClientProvider);
-      updateFileNotes(client, widget.fileId, pending).catchError((_) {});
+      // Best-effort save on close (write-through to drift + outbox).
+      updateFileNotes(ref, widget.fileId, pending).catchError((_) {});
     }
     _notesCtrl.dispose();
     super.dispose();
@@ -45,14 +66,11 @@ class _FileDetailScreenState extends ConsumerState<FileDetailScreen> {
     _debounce = Timer(const Duration(milliseconds: 800), () async {
       if (v == _lastSaved) return;
       try {
-        await updateFileNotes(
-          ref.read(supabaseClientProvider),
-          widget.fileId,
-          v,
-        );
+        await updateFileNotes(ref, widget.fileId, v);
         _lastSaved = v;
       } catch (_) {
-        // Soft-fail; next keystroke retries.
+        // Soft-fail; next keystroke retries. (Network failures here are
+        // already absorbed by the outbox enqueue.)
       }
     });
   }
@@ -132,11 +150,25 @@ class _DetailBody extends ConsumerWidget {
         .any(n.endsWith);
   }
 
-  Future<String> _signedUrl(WidgetRef ref) async {
+  /// Resolves the blob to a local file path via the disk-backed cache.
+  ///
+  /// First call: downloads via a signed URL and persists. Subsequent calls
+  /// (online OR offline): instant cache hit. Returns null when offline AND
+  /// the blob has never been cached — the UI surfaces an empty state in
+  /// that case.
+  Future<String?> _localBlobPath(WidgetRef ref) async {
+    final cache = ref.read(blobCacheProvider);
     final client = ref.read(supabaseClientProvider);
-    return client.storage
-        .from('medical-files')
-        .createSignedUrl(file.storagePath, 60 * 30); // 30 min
+    // Try a pure read first (works offline).
+    final cached = await cache.getCached(file.storagePath);
+    if (cached != null) return cached;
+    final online = ref.read(isOnlineProvider);
+    if (!online) return null;
+    return cache.getOrDownload(
+      client: client,
+      storagePath: file.storagePath,
+      bucketName: 'medical-files',
+    );
   }
 
   String _formatDate(DateTime d) {
@@ -196,33 +228,42 @@ class _DetailBody extends ConsumerWidget {
 
         // ── Viewer ───────────────────────────────────────────────
         Expanded(
-          child: FutureBuilder<String>(
-            future: _signedUrl(ref),
+          child: FutureBuilder<String?>(
+            future: _localBlobPath(ref),
             builder: (context, snap) {
               if (snap.connectionState != ConnectionState.done) {
                 return const Center(child: CircularProgressIndicator());
               }
-              if (snap.hasError || snap.data == null) {
-                return const Center(
-                  child: Text(
-                    'Could not load file.',
-                    style: TextStyle(color: AppTheme.muted),
+              final localPath = snap.data;
+              if (localPath == null) {
+                // Offline + first open, or signed-URL/download failure.
+                final online = ref.read(isOnlineProvider);
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Text(
+                      online
+                          ? 'Could not load file.'
+                          : "You need to be online to load this file for the first time.",
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: AppTheme.muted),
+                    ),
                   ),
                 );
               }
               if (_isPdf) {
-                return _PdfViewer(url: snap.data!);
+                return _PdfViewer(localPath: localPath);
               }
               if (_isImage) {
                 return InteractiveViewer(
                   child: Center(
-                    child: CachedNetworkImage(
-                      imageUrl: snap.data!,
+                    child: Image.file(
+                      File(localPath),
                       fit: BoxFit.contain,
-                      placeholder: (_, _) => const Center(
-                        child: CircularProgressIndicator(),
-                      ),
-                      errorWidget: (_, _, _) => const Center(
+                      // Defensive: a corrupted/partial download should
+                      // not crash the screen. CachedNetworkImage is no
+                      // longer needed because we read from disk.
+                      errorBuilder: (_, _, _) => const Center(
                         child: Icon(Icons.broken_image_outlined,
                             color: AppTheme.muted),
                       ),
@@ -252,57 +293,17 @@ class _DetailBody extends ConsumerWidget {
   }
 }
 
-class _PdfViewer extends StatefulWidget {
-  final String url;
-  const _PdfViewer({required this.url});
-
-  @override
-  State<_PdfViewer> createState() => _PdfViewerState();
-}
-
-class _PdfViewerState extends State<_PdfViewer> {
-  String? _path;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _download();
-  }
-
-  Future<void> _download() async {
-    try {
-      final dir = await getTemporaryDirectory();
-      final file = File(
-        '${dir.path}/preview_${DateTime.now().microsecondsSinceEpoch}.pdf',
-      );
-      final client = HttpClient();
-      final req = await client.getUrl(Uri.parse(widget.url));
-      final res = await req.close();
-      final sink = file.openWrite();
-      await res.pipe(sink);
-      await sink.close();
-      if (!mounted) return;
-      setState(() => _path = file.path);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _error = e.toString());
-    }
-  }
+/// Renders a PDF from a local file path. The path comes from [BlobCache]
+/// which has already done the download (or returned a cache hit, including
+/// while offline). No network work happens here.
+class _PdfViewer extends StatelessWidget {
+  final String localPath;
+  const _PdfViewer({required this.localPath});
 
   @override
   Widget build(BuildContext context) {
-    if (_error != null) {
-      return const Center(
-        child: Text('PDF preview failed.',
-            style: TextStyle(color: AppTheme.muted)),
-      );
-    }
-    if (_path == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
     return PDFView(
-      filePath: _path!,
+      filePath: localPath,
       enableSwipe: true,
       swipeHorizontal: false,
       autoSpacing: true,

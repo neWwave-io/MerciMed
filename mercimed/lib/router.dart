@@ -12,9 +12,11 @@ import 'features/family/screens/family_screen.dart';
 import 'features/files/screens/file_detail_screen.dart';
 import 'features/files/screens/folder_screen.dart';
 import 'features/files/screens/home_screen.dart';
+import 'features/profile/screens/edit_profile_screen.dart';
 import 'features/profile/screens/profile_screen.dart';
 import 'shared/widgets/animated_background.dart';
 import 'shared/widgets/app_bottom_nav.dart';
+import 'shared/widgets/offline_banner.dart';
 
 class _AuthChangeNotifier extends ChangeNotifier {
   late final StreamSubscription<AuthState> _sub;
@@ -123,6 +125,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/profile',
             pageBuilder: (_, state) => _fadePage(state, const ProfileScreen()),
           ),
+          GoRoute(
+            path: '/profile/edit',
+            pageBuilder: (_, state) =>
+                _fadePage(state, const EditProfileScreen()),
+          ),
         ],
       ),
     ],
@@ -144,7 +151,8 @@ class MainShell extends StatelessWidget {
   bool get _hideNav =>
       location.startsWith('/chat') ||
       location.startsWith('/folder') ||
-      location.startsWith('/file');
+      location.startsWith('/file') ||
+      location.startsWith('/profile/edit');
 
   @override
   Widget build(BuildContext context) {
@@ -152,7 +160,7 @@ class MainShell extends StatelessWidget {
       child: Scaffold(
         extendBody: true,
         backgroundColor: Colors.transparent,
-        body: child,
+        body: OfflineBanner(child: child),
         bottomNavigationBar: _hideNav
             ? null
             : AppBottomNav(

@@ -10,7 +10,11 @@ import '../../../features/family/widgets/invite_family_sheet.dart';
 import '../../../shared/models/folder.dart';
 import '../../../shared/models/profile.dart';
 import '../../../shared/theme/app_theme.dart';
+import '../../../shared/widgets/app_bottom_sheet.dart';
 import '../providers/files_provider.dart';
+import '../util/folder_icon.dart';
+import '../widgets/add_menu_sheet.dart';
+import 'folder_screen.dart' show UploadConfirm, UploadPreviewDialog;
 
 const String _kGeneralFolderName = 'General';
 
@@ -77,58 +81,64 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _showFolderActions(Folder folder) async {
-    final action = await showModalBottomSheet<String>(
+    final action = await showAppBottomSheet<String>(
       context: context,
       backgroundColor: AppTheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
-      builder: (ctx) => SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: const Color(0xFFCBD5E0),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 6),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  folder.name,
-                  style: const TextStyle(
-                    color: AppTheme.primaryDark,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFCBD5E0),
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.edit_rounded, color: AppTheme.primaryDark),
-              title: const Text('Rename'),
-              onTap: () => Navigator.pop(ctx, 'rename'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline_rounded, color: Color(0xFFD64B4B)),
-              title: const Text(
-                'Delete',
-                style: TextStyle(color: Color(0xFFD64B4B)),
+              const SizedBox(height: 14),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 6),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    folder.name,
+                    style: const TextStyle(
+                      color: AppTheme.primaryDark,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ),
-              onTap: () => Navigator.pop(ctx, 'delete'),
-            ),
-            const SizedBox(height: 8),
-          ],
+              ListTile(
+                leading: const Icon(Icons.edit_rounded, color: AppTheme.primaryDark),
+                title: const Text('Rename'),
+                onTap: () => Navigator.pop(ctx, 'rename'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline_rounded, color: Color(0xFFD64B4B)),
+                title: const Text(
+                  'Delete',
+                  style: TextStyle(color: Color(0xFFD64B4B)),
+                ),
+                onTap: () => Navigator.pop(ctx, 'delete'),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
@@ -178,6 +188,122 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       await ref
           .read(folderNotifierProvider.notifier)
           .create(draft.name, notes: draft.notes);
+    }
+  }
+
+  /// Opens the 3-option add menu (new folder / upload files / create folder
+  /// with files). Wired to the home-screen FAB.
+  void _openAddMenu() {
+    showAddMenuSheet(
+      context: context,
+      onNewFolder: _showNewFolderDialog,
+      onFileUpload: _uploadIntoGeneral,
+      onFolderWithFiles: _createFolderAndUpload,
+    );
+  }
+
+  /// Pick files → upload them into the user's "General" folder (creating it
+  /// if absent). One preview dialog per file so the user can attach notes
+  /// individually.
+  Future<void> _uploadIntoGeneral() async {
+    final folderId = await _ensureGeneralFolderId();
+    if (folderId == null || !mounted) return;
+    final folder = await _resolveFolderById(folderId);
+    if (folder == null || !mounted) return;
+    await _pickAndCommitUploads(folder);
+  }
+
+  /// Show the new-folder dialog, then upload any picked files into the new
+  /// folder. If the user cancels the file picker we still keep the folder
+  /// they just created — they may want it empty.
+  Future<void> _createFolderAndUpload() async {
+    final draft = await showDialog<_FolderDraft>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (_) => const _NewFolderDialog(),
+    );
+    if (draft == null || draft.name.isEmpty || !mounted) return;
+
+    final client = ref.read(supabaseClientProvider);
+    final user = client.auth.currentUser;
+    if (user == null) return;
+
+    final inserted = await client
+        .from('folders')
+        .insert({
+          'user_id': user.id,
+          'name': draft.name,
+          if (draft.notes != null && draft.notes!.trim().isNotEmpty)
+            'notes': draft.notes!.trim(),
+        })
+        .select()
+        .single();
+    final newFolder = Folder.fromJson(inserted);
+    if (!mounted) return;
+    // Realtime on `folders` will surface the new row in the home grid; no
+    // explicit invalidation needed.
+    await _pickAndCommitUploads(newFolder);
+  }
+
+  /// Resolves a folder id to a [Folder] for the [UploadPreviewDialog]. Reads
+  /// the live stream first, falls back to a direct fetch when the stream
+  /// hasn't caught up yet (e.g. just-created folder).
+  Future<Folder?> _resolveFolderById(String id) async {
+    final cached = ref.read(foldersProvider(null)).value ?? const <Folder>[];
+    for (final f in cached) {
+      if (f.id == id) return f;
+    }
+    final client = ref.read(supabaseClientProvider);
+    final row = await client
+        .from('folders')
+        .select()
+        .eq('id', id)
+        .maybeSingle();
+    if (row == null) return null;
+    return Folder.fromJson(row);
+  }
+
+  Future<void> _pickAndCommitUploads(Folder folder) async {
+    final notifier = ref.read(uploadNotifierProvider.notifier);
+    final messenger = ScaffoldMessenger.of(context);
+    final drafts = await notifier.pickFiles();
+    if (drafts == null || drafts.isEmpty || !mounted) {
+      final err = ref.read(uploadNotifierProvider).errorMessage;
+      if (err != null) {
+        messenger.clearSnackBars();
+        messenger.showSnackBar(SnackBar(
+          backgroundColor: const Color(0xFFD64B4B),
+          behavior: SnackBarBehavior.floating,
+          content: Text(err, style: const TextStyle(color: Colors.white)),
+        ));
+      }
+      return;
+    }
+
+    for (final draft in drafts) {
+      if (!mounted) return;
+      final confirmed = await showDialog<UploadConfirm>(
+        context: context,
+        barrierColor: Colors.black.withValues(alpha: 0.5),
+        builder: (_) => UploadPreviewDialog(draft: draft, folder: folder),
+      );
+      if (!mounted || confirmed == null) continue;
+      await notifier.upload(
+        folderId: confirmed.folderId,
+        file: draft.file,
+        displayName: draft.displayName,
+        notes: confirmed.notes,
+      );
+      if (!mounted) return;
+      final err = ref.read(uploadNotifierProvider).errorMessage;
+      if (err != null) {
+        messenger.clearSnackBars();
+        messenger.showSnackBar(SnackBar(
+          backgroundColor: const Color(0xFFD64B4B),
+          behavior: SnackBarBehavior.floating,
+          content: Text(err, style: const TextStyle(color: Colors.white)),
+        ));
+      }
     }
   }
 
@@ -342,13 +468,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      // Hide the "new folder" FAB when viewing a family member's records —
-      // the viewer can't create folders on someone else's account.
+      // Hide the "add" FAB when viewing a family member's records — the viewer
+      // can't create folders / upload files on someone else's account.
       floatingActionButton: activeOwner == null
           ? Padding(
               // Lift above the floating glass nav bar in MainShell.
               padding: const EdgeInsets.only(bottom: 81),
-              child: _NewFolderFab(onTap: _showNewFolderDialog),
+              child: _AddMenuFab(onTap: _openAddMenu),
             )
           : null,
       body: SafeArea(
@@ -1201,11 +1327,11 @@ class _DialogButton extends StatelessWidget {
   }
 }
 
-// ── New-folder FAB ────────────────────────────────────────────────────────────
+// ── Add-menu FAB ─────────────────────────────────────────────────────────────
 
-class _NewFolderFab extends StatelessWidget {
+class _AddMenuFab extends StatelessWidget {
   final VoidCallback onTap;
-  const _NewFolderFab({required this.onTap});
+  const _AddMenuFab({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -1231,8 +1357,8 @@ class _NewFolderFab extends StatelessWidget {
             width: 60,
             height: 60,
             child: Icon(
-              Icons.create_new_folder_outlined,
-              size: 26,
+              Icons.add_rounded,
+              size: 28,
               color: Colors.white,
             ),
           ),
@@ -1244,13 +1370,16 @@ class _NewFolderFab extends StatelessWidget {
 
 // ── Folder color palette ───────────────────────────────────────────────────────
 
+// Mint-family accents tuned for AppTheme. Keep this list in sync with the
+// matching `_kFolderColors` in folder_screen.dart — the same folder should
+// pick up the same color across both screens.
 const _kFolderColors = [
-  Color(0xFFD64B4B),
-  Color(0xFF2D6B6B),
-  Color(0xFFD4943A),
-  Color(0xFF4A7B8B),
-  Color(0xFF7B6B8A),
-  Color(0xFF5A8A6B),
+  Color(0xFF2D6B6B), // teal (primary)
+  Color(0xFF5A8A6B), // sage
+  Color(0xFF7BA8A8), // soft mint
+  Color(0xFF4A7B8B), // slate blue
+  Color(0xFF6BA591), // deep mint
+  Color(0xFF8AB0B0), // sky
 ];
 
 // ── Folder card ────────────────────────────────────────────────────────────────
@@ -1283,15 +1412,23 @@ class _FolderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _kFolderColors[colorIndex % _kFolderColors.length];
+    final accent = _kFolderColors[colorIndex % _kFolderColors.length];
     final count = stats?.fileCount ?? 0;
+    final icon = iconForFolder(folder);
 
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.92),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white,
+              accent.withValues(alpha: 0.10),
+            ],
+          ),
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
@@ -1309,13 +1446,14 @@ class _FolderCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  width: 8,
-                  height: 8,
-                  margin: const EdgeInsets.only(top: 6),
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
+                    color: accent.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(12),
                   ),
+                  alignment: Alignment.center,
+                  child: Icon(icon, color: accent, size: 22),
                 ),
                 const Spacer(),
                 if (count > 0)

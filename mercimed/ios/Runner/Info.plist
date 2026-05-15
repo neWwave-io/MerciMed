@@ -8,6 +8,16 @@
 	<string>MerciMed uses the microphone so you can dictate questions to Mercie instead of typing.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>MerciMed transcribes your voice into text so you can chat with Mercie hands-free.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>MerciMed needs access to your photo library so you can set or change your profile picture.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>MerciMed uses the camera so you can take a profile picture.</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>tel</string>
+		<string>tg</string>
+		<string>https</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

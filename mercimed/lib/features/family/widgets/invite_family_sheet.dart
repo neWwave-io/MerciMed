@@ -16,24 +16,31 @@ const _kRelationshipTypes = [
   'Other',
 ];
 
+/// Opens the family-invite UI as a full-screen modal route.
+///
+/// Originally a draggable bottom sheet, this got promoted to a full-screen
+/// route because the keyboard + search results + nested relationship picker
+/// dialog made the sheet variant cramped and the nested-modal pattern
+/// fragile. The page covers the bottom nav while open, which removes any
+/// reserved-height math.
 Future<bool> showInviteFamilySheet(BuildContext context) async {
-  final sent = await showModalBottomSheet<bool>(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (_) => const _InviteFamilySheet(),
+  final sent = await Navigator.of(context).push<bool>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => const InviteFamilyPage(),
+    ),
   );
   return sent ?? false;
 }
 
-class _InviteFamilySheet extends ConsumerStatefulWidget {
-  const _InviteFamilySheet();
+class InviteFamilyPage extends ConsumerStatefulWidget {
+  const InviteFamilyPage({super.key});
 
   @override
-  ConsumerState<_InviteFamilySheet> createState() => _InviteFamilySheetState();
+  ConsumerState<InviteFamilyPage> createState() => _InviteFamilyPageState();
 }
 
-class _InviteFamilySheetState extends ConsumerState<_InviteFamilySheet> {
+class _InviteFamilyPageState extends ConsumerState<InviteFamilyPage> {
   final _searchCtrl = TextEditingController();
   String _query = '';
   Timer? _debounce;
@@ -91,78 +98,62 @@ class _InviteFamilySheetState extends ConsumerState<_InviteFamilySheet> {
 
   @override
   Widget build(BuildContext context) {
-    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
-    // When the keyboard is up, its inset already pushes the sheet — otherwise
-    // we still need clearance over the floating glass nav (~100 px).
-    final bottomGap = keyboard > 0 ? keyboard : 100.0;
     final searchAsync = ref.watch(userSearchProvider(_query));
 
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottomGap),
-      child: DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.7,
-        minChildSize: 0.4,
-        maxChildSize: 0.92,
-        builder: (_, scrollCtrl) => Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFFF6FAF8),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6FAF8),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF6FAF8),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          tooltip: 'Close',
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.close_rounded),
+        ),
+        title: const Text(
+          'Add family member',
+          style: TextStyle(
+            color: AppTheme.primaryDark,
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.3,
           ),
-          child: Column(
-            children: [
-              const SizedBox(height: 10),
-              Center(
-                child: Container(
-                  width: 44,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppTheme.primaryDark.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(4),
+        ),
+      ),
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 4, 24, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Search a member by name or email. Tap to send a request.",
+                    style: TextStyle(
+                      color: Color(0xFF4A5568),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 16),
+                  _SearchField(
+                    controller: _searchCtrl,
+                    onChanged: _onSearchChanged,
+                  ),
+                ],
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 18, 24, 6),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Add family member',
-                      style: TextStyle(
-                        color: AppTheme.primaryDark,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      "Search a member by name or email. Tap to send a request.",
-                      style: TextStyle(
-                        color: Color(0xFF4A5568),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    _SearchField(
-                      controller: _searchCtrl,
-                      onChanged: _onSearchChanged,
-                    ),
-                  ],
-                ),
+            ),
+            Expanded(
+              child: _ResultsList(
+                query: _query,
+                asyncResults: searchAsync,
+                onTapProfile: _pickRelationshipAndSend,
               ),
-              Expanded(
-                child: _ResultsList(
-                  scrollCtrl: scrollCtrl,
-                  query: _query,
-                  asyncResults: searchAsync,
-                  onTapProfile: _pickRelationshipAndSend,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -226,13 +217,11 @@ class _SearchField extends StatelessWidget {
 }
 
 class _ResultsList extends StatelessWidget {
-  final ScrollController scrollCtrl;
   final String query;
   final AsyncValue<List<Profile>> asyncResults;
   final void Function(Profile) onTapProfile;
 
   const _ResultsList({
-    required this.scrollCtrl,
     required this.query,
     required this.asyncResults,
     required this.onTapProfile,
@@ -266,7 +255,6 @@ class _ResultsList extends StatelessWidget {
           );
         }
         return ListView.separated(
-          controller: scrollCtrl,
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
           itemCount: results.length,
           separatorBuilder: (_, _) => const SizedBox(height: 8),

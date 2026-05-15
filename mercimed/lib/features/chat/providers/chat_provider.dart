@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../shared/cache/local_db.dart';
 import '../../../shared/models/chat_message.dart';
 import '../../../shared/models/conversation.dart';
 import '../../../supabase_config.dart';
@@ -12,22 +14,49 @@ import '../../auth/providers/auth_provider.dart';
 
 // ── Conversations stream ─────────────────────────────────────────────────────
 
-/// Live list of conversations for the signed-in user, newest first.
-final conversationsStreamProvider =
-    StreamProvider.autoDispose<List<Conversation>>((ref) {
+/// Reconciler: subscribes to the Supabase `conversations` stream and
+/// upserts the snapshot into drift. Tombstones rows missing from the
+/// server view. Conversations don't have a `dirty` flag because there is
+/// no offline write path for them in v1+v2.
+final _conversationHydrationProvider = Provider.autoDispose<void>((ref) {
   final client = ref.watch(supabaseClientProvider);
+  final db = ref.watch(localDbProvider);
   final user = client.auth.currentUser;
-  if (user == null) return Stream.value(const []);
-  return client
+  if (user == null) return;
+  final ownerId = user.id;
+
+  final sub = client
       .from('conversations')
       .stream(primaryKey: ['id'])
-      .eq('user_id', user.id)
-      .order('updated_at')
-      .map((rows) {
-    final list = rows.map(Conversation.fromJson).toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    return list;
-  });
+      .eq('user_id', ownerId)
+      .listen((rows) async {
+        try {
+          final list =
+              rows.map<Conversation>(Conversation.fromJson).toList(
+                    growable: false,
+                  );
+          await db.upsertConversations(list);
+          await db.deleteConversationsNotIn(
+            ownerId: ownerId,
+            keepIds: list.map((c) => c.id).toSet(),
+          );
+        } catch (e, st) {
+          debugPrint('conversations hydration failed: $e\n$st');
+        }
+      });
+  ref.onDispose(sub.cancel);
+});
+
+/// Local-first stream of conversations for the signed-in user.
+/// Backed by drift so the list is available offline.
+final conversationsStreamProvider =
+    StreamProvider.autoDispose<List<Conversation>>((ref) {
+  ref.watch(_conversationHydrationProvider); // keep reconciler alive
+  final client = ref.watch(supabaseClientProvider);
+  final db = ref.watch(localDbProvider);
+  final user = client.auth.currentUser;
+  if (user == null) return Stream.value(const []);
+  return db.watchConversationsForOwner(user.id);
 });
 
 /// Currently selected conversation id. null = "use latest, or create one
@@ -45,19 +74,46 @@ final effectiveConversationIdProvider = Provider.autoDispose<String?>((ref) {
 
 // ── Messages stream (scoped to active conversation) ──────────────────────────
 
-final chatMessagesStreamProvider =
-    StreamProvider.autoDispose<List<ChatMessage>>((ref) {
+/// Reconciler for chat messages, scoped to whichever conversation is
+/// currently active. Re-subscribes when [effectiveConversationIdProvider]
+/// flips. Cancellation on dispose handles the switch cleanly.
+final _messageHydrationProvider = Provider.autoDispose<void>((ref) {
   final client = ref.watch(supabaseClientProvider);
+  final db = ref.watch(localDbProvider);
   final user = client.auth.currentUser;
   final convId = ref.watch(effectiveConversationIdProvider);
-  if (user == null || convId == null) return Stream.value(const []);
-  return client
+  if (user == null || convId == null) return;
+
+  final sub = client
       .from('chat_messages')
       .stream(primaryKey: ['id'])
       .eq('conversation_id', convId)
-      .order('created_at')
-      .map((rows) {
-    final list = rows.map(ChatMessage.fromJson).toList()
+      .listen((rows) async {
+        try {
+          final list = rows
+              .map<ChatMessage>(ChatMessage.fromJson)
+              .toList(growable: false);
+          await db.upsertMessages(list);
+          await db.deleteMessagesNotIn(
+            conversationId: convId,
+            keepIds: list.map((m) => m.id).toSet(),
+          );
+        } catch (e, st) {
+          debugPrint('messages hydration failed: $e\n$st');
+        }
+      });
+  ref.onDispose(sub.cancel);
+});
+
+final chatMessagesStreamProvider =
+    StreamProvider.autoDispose<List<ChatMessage>>((ref) {
+  ref.watch(_messageHydrationProvider);
+  final db = ref.watch(localDbProvider);
+  final convId = ref.watch(effectiveConversationIdProvider);
+  if (convId == null) return Stream.value(const []);
+  return db.watchMessagesForConversation(convId).map((list) {
+    // Mirror the previous client-side ordering tie-break.
+    final sorted = [...list]
       ..sort((a, b) {
         final cmp = a.createdAt.compareTo(b.createdAt);
         if (cmp != 0) return cmp;
@@ -65,7 +121,7 @@ final chatMessagesStreamProvider =
         if (a.role != 'user' && b.role == 'user') return 1;
         return a.id.compareTo(b.id);
       });
-    return list;
+    return sorted;
   });
 });
 

@@ -11,6 +11,8 @@ import '../../../features/files/providers/files_provider.dart';
 import '../../../shared/models/profile.dart';
 import '../../../shared/theme/app_theme.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../widgets/care_providers_section.dart';
+import '../widgets/emergency_sos_sheet.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -153,6 +155,15 @@ class ProfileScreen extends ConsumerWidget {
                       ],
                     ),
                   ),
+                  IconButton(
+                    tooltip: 'Edit profile',
+                    onPressed: () => context.push('/profile/edit'),
+                    icon: const Icon(
+                      Icons.edit_rounded,
+                      color: AppTheme.primaryDark,
+                      size: 20,
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 32),
@@ -166,6 +177,13 @@ class ProfileScreen extends ConsumerWidget {
               ),
             ],
           ),
+        ),
+
+        const SizedBox(height: 20),
+
+        // ── Emergency SOS ────────────────────────────────────────
+        _EmergencySosButton(
+          onTap: () => showEmergencySosSheet(context),
         ),
 
         const SizedBox(height: 24),
@@ -238,6 +256,16 @@ class ProfileScreen extends ConsumerWidget {
                   ],
                 ),
         ),
+
+        const SizedBox(height: 28),
+
+        // ── Care providers (OCIC-affiliated hospitals) ───────────
+        const _SectionHeader(
+          label: 'CARE PROVIDERS',
+          subtitle: 'partner hospitals',
+        ),
+        const SizedBox(height: 12),
+        const CareProvidersSection(),
 
         const SizedBox(height: 32),
 
@@ -683,6 +711,93 @@ class _FamilyMember extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ── Emergency SOS button ───────────────────────────────────────────────────────
+
+class _EmergencySosButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _EmergencySosButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    const red = Color(0xFFD64B4B);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFFE15E5E), red],
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: red.withValues(alpha: 0.30),
+                blurRadius: 22,
+                spreadRadius: -2,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.22),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                alignment: Alignment.center,
+                child: const Icon(
+                  Icons.local_hospital_rounded,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 14),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Emergency SOS',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Cambodia 119 / 117 / 118',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.white,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

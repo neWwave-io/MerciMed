@@ -44,6 +44,15 @@ dependencies:
   intl: ^0.20.1
   speech_to_text: ^7.0.0
   permission_handler: ^11.3.1
+  # Avatar upload + emergency-SOS dialing (flutter-ui workstream)
+  image_picker: ^1.0.7
+  url_launcher: ^6.2.5
+  # Offline cache + connectivity (flutter-offline workstream)
+  drift: ^2.20.0
+  drift_flutter: ^0.2.0
+  sqlite3_flutter_libs: ^0.5.24
+  connectivity_plus: ^6.0.0
+  crypto: ^3.0.0
 
 dev_dependencies:
   flutter_test:
@@ -55,6 +64,9 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  # Codegen for drift (the ONE place codegen is allowed — see CLAUDE.md).
+  drift_dev: ^2.20.0
+  build_runner: ^2.4.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

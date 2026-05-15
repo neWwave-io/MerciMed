@@ -1,3 +1,13 @@
+// Hand-written ChatMessage model.
+//
+// Bridges:
+//   • fromJson / toJson  — Supabase REST + Realtime payloads.
+//   • fromDriftRow / toDriftCompanion — local drift cache.
+
+import 'package:drift/drift.dart' show Value;
+
+import '../cache/local_db.dart';
+
 class ChatMessage {
   final String id;
   final String userId;
@@ -32,4 +42,22 @@ class ChatMessage {
         'content': content,
         'created_at': createdAt.toIso8601String(),
       };
+
+  factory ChatMessage.fromDriftRow(DriftChatMessageRow r) => ChatMessage(
+        id: r.id,
+        userId: r.userId,
+        conversationId: r.conversationId,
+        role: r.role,
+        content: r.content,
+        createdAt: r.createdAt,
+      );
+
+  ChatMessagesCompanion toDriftCompanion() => ChatMessagesCompanion.insert(
+        id: id,
+        userId: userId,
+        conversationId: Value(conversationId),
+        role: role,
+        content: content,
+        createdAt: createdAt,
+      );
 }
