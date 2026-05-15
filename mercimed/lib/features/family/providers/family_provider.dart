@@ -16,7 +16,8 @@ final activeOwnerProvider = StateProvider<String?>((_) => null);
 final effectiveOwnerIdProvider = Provider<String?>((ref) {
   final override = ref.watch(activeOwnerProvider);
   if (override != null) return override;
-  final user = ref.watch(supabaseClientProvider).auth.currentUser;
+  // Watch the auth-aware user so this re-resolves on login/logout.
+  final user = ref.watch(currentUserProvider);
   return user?.id;
 });
 
@@ -173,6 +174,35 @@ final pendingRequestsProvider =
       createdAt: DateTime.parse(r['created_at'] as String),
     );
   }).toList();
+});
+
+/// Suggested users to invite — the most recently joined members, excluding
+/// the signed-in user and anyone the user is already related to. Powers the
+/// initial grid in the invite sheet before the user types a query.
+final suggestedUsersProvider =
+    FutureProvider.autoDispose<List<Profile>>((ref) async {
+  final client = ref.watch(supabaseClientProvider);
+  final user = ref.watch(currentUserProvider);
+  if (user == null) return const [];
+
+  final rows = await client
+      .from('profiles')
+      .select()
+      .neq('id', user.id)
+      .order('created_at', ascending: false)
+      .limit(24);
+
+  final outgoing = ref.watch(_outgoingRelationshipsStreamProvider).value ?? [];
+  final incoming = ref.watch(_incomingRelationshipsStreamProvider).value ?? [];
+  final relatedIds = <String>{
+    for (final r in outgoing) r['target_id'] as String,
+    for (final r in incoming) r['requester_id'] as String,
+  };
+
+  return (rows as List)
+      .map((p) => Profile.fromJson(p as Map<String, dynamic>))
+      .where((p) => !relatedIds.contains(p.id))
+      .toList();
 });
 
 /// Live search over public.profiles by name or email. Excludes the signed-in

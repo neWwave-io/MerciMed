@@ -266,6 +266,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _hasText = false;
   bool _listening = false;
+  bool _initialLoaded = false;
   String _speechBase = ''; // text already in the field before recording
   // Files the user has uploaded in this session that haven't been sent in a
   // message yet — rendered as chips above the input bar.
@@ -555,14 +556,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final allFiles = filesAsync.value ?? const <FileModel>[];
     final online = ref.watch(isOnlineProvider);
 
+    // Reset the fade-in whenever the user opens a different conversation.
+    ref.listen<String?>(effectiveConversationIdProvider, (prev, next) {
+      if (prev != next && mounted) {
+        setState(() => _initialLoaded = false);
+      }
+    });
+
     // Auto-scroll when either persisted history grows or a token arrives.
     ref.listen<ChatLive>(chatProvider, (_, _) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
     });
     ref.listen<AsyncValue<List<ChatMessage>>>(chatMessagesStreamProvider,
-        (_, _) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd());
+        (_, next) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _scrollToEnd();
+        if (!_initialLoaded && next.value != null) {
+          setState(() => _initialLoaded = true);
+        }
+      });
     });
+
+    // First-mount case: persisted data may already be available before any
+    // ref.listen events fire — flip the flag once after layout.
+    if (!_initialLoaded && persistedAsync.value != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _initialLoaded) return;
+        _scrollToEnd();
+        setState(() => _initialLoaded = true);
+      });
+    }
 
     // Hide the optimistic bubble once its content lands in the persisted
     // stream (the edge function inserts it after [DONE]).
@@ -579,14 +603,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           children: [
             const _ChatHeader(),
             Expanded(
-              child: _Messages(
-                scrollCtrl: _scrollCtrl,
-                messages: persisted,
-                allFiles: allFiles,
-                optimisticUser: showOptimistic ? live.optimisticUser : null,
-                streamingBuffer: live.streamingBuffer,
-                isStreaming: live.isStreaming,
-                errorMessage: live.errorMessage,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 320),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, anim) => FadeTransition(
+                  opacity: anim,
+                  child: child,
+                ),
+                layoutBuilder: (current, previous) => Stack(
+                  alignment: Alignment.bottomCenter,
+                  children: <Widget>[
+                    ...previous,
+                    if (current != null) Positioned.fill(child: current),
+                  ],
+                ),
+                child: _initialLoaded
+                    ? KeyedSubtree(
+                        key: const ValueKey('chat-messages'),
+                        child: _Messages(
+                          scrollCtrl: _scrollCtrl,
+                          messages: persisted,
+                          allFiles: allFiles,
+                          optimisticUser:
+                              showOptimistic ? live.optimisticUser : null,
+                          streamingBuffer: live.streamingBuffer,
+                          isStreaming: live.isStreaming,
+                          errorMessage: live.errorMessage,
+                        ),
+                      )
+                    : const _ChatLoadingState(key: ValueKey('chat-loading')),
               ),
             ),
             _ChatInputBar(
@@ -737,6 +783,96 @@ class _Dot extends StatelessWidget {
 }
 
 // ── Messages list ──────────────────────────────────────────────────────────────
+
+// ── Loading state ─────────────────────────────────────────────────────────────
+
+/// Anchored at the bottom of the messages area so when the real conversation
+/// fades in over it, the latest-message position stays put — no jarring jump
+/// from top-aligned greeting to bottom-aligned chat.
+class _ChatLoadingState extends StatelessWidget {
+  const _ChatLoadingState({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            _ChatLoadingPulse(),
+            SizedBox(height: 10),
+            Text(
+              'Loading conversation…',
+              style: TextStyle(
+                color: Color(0xFF6B7C8C),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatLoadingPulse extends StatefulWidget {
+  const _ChatLoadingPulse();
+
+  @override
+  State<_ChatLoadingPulse> createState() => _ChatLoadingPulseState();
+}
+
+class _ChatLoadingPulseState extends State<_ChatLoadingPulse>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, _) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (i) {
+            // Stagger the three dots so the pulse reads as a wave.
+            final t = ((_ctrl.value + i * 0.18) % 1.0);
+            // Triangle wave 0→1→0 over one cycle: peaks at t == 0.5.
+            final tri = 1 - (t * 2 - 1).abs();
+            final scale = 0.7 + 0.5 * tri;
+            final opacity = 0.30 + 0.65 * tri;
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 5),
+              child: Transform.scale(
+                scale: scale,
+                child: Container(
+                  width: 9,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryDark.withValues(alpha: opacity),
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
 
 class _Messages extends StatelessWidget {
   final ScrollController scrollCtrl;

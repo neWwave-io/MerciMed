@@ -121,9 +121,12 @@ class ProfileScreen extends ConsumerWidget {
             children: [
               Row(
                 children: [
-                  _ProfileAvatar(
-                    initial: initial,
-                    url: profile?.avatarUrl,
+                  GestureDetector(
+                    onTap: () => context.push('/profile/edit'),
+                    child: _ProfileAvatar(
+                      initial: initial,
+                      url: profile?.avatarUrl,
+                    ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -155,14 +158,8 @@ class ProfileScreen extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Edit profile',
-                    onPressed: () => context.push('/profile/edit'),
-                    icon: const Icon(
-                      Icons.edit_rounded,
-                      color: AppTheme.primaryDark,
-                      size: 20,
-                    ),
+                  _EditProfileButton(
+                    onTap: () => context.push('/profile/edit'),
                   ),
                 ],
               ),
@@ -349,6 +346,53 @@ class _GlassCard extends StatelessWidget {
             ),
             padding: padding,
             child: child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Edit profile pill ─────────────────────────────────────────────────────────
+
+class _EditProfileButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _EditProfileButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(100),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(100),
+            border: Border.all(
+              color: AppTheme.primaryDark.withValues(alpha: 0.12),
+            ),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.edit_rounded,
+                size: 13,
+                color: AppTheme.primaryDark,
+              ),
+              SizedBox(width: 6),
+              Text(
+                'Edit',
+                style: TextStyle(
+                  color: AppTheme.primaryDark,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
         ),
       ),

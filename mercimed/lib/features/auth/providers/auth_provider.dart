@@ -16,6 +16,10 @@ final authStateProvider = StreamProvider<AuthState>((ref) {
 });
 
 final currentUserProvider = Provider<User?>((ref) {
+  // Subscribe to auth state so this re-evaluates on login/logout.
+  // Without this, the value captured at first build (often null on the
+  // login screen) sticks until hot-reload.
+  ref.watch(authStateProvider);
   return ref.watch(supabaseClientProvider).auth.currentUser;
 });
 
@@ -72,7 +76,28 @@ class AuthNotifier extends StateNotifier<AsyncValue<void>> {
           fileOptions: FileOptions(contentType: mimeType, upsert: true),
         );
 
-    return _client.storage.from('avatars').getPublicUrl(path);
+    final url = _client.storage.from('avatars').getPublicUrl(path);
+    // Cache-bust so CachedNetworkImage refetches after an overwrite.
+    final sep = url.contains('?') ? '&' : '?';
+    return '$url${sep}v=${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  Future<void> updateProfile({String? fullName, File? avatar}) async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      throw StateError('Not signed in.');
+    }
+    final updates = <String, dynamic>{};
+    final trimmedName = fullName?.trim();
+    if (trimmedName != null && trimmedName.isNotEmpty) {
+      updates['full_name'] = trimmedName;
+    }
+    if (avatar != null) {
+      final url = await _uploadAvatar(userId: user.id, file: avatar);
+      if (url != null) updates['avatar_url'] = url;
+    }
+    if (updates.isEmpty) return;
+    await _client.from('profiles').update(updates).eq('id', user.id);
   }
 
   Future<void> logout() async {

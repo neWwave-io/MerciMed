@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -321,6 +322,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     required int colorOffset,
   }) {
     final folders = foldersAsync.value ?? const <Folder>[];
+    final isInitialLoading = foldersAsync.value == null;
     final filtered = _query.isEmpty
         ? folders
         : folders
@@ -378,7 +380,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
       ),
       if (isOpen)
-        if (filtered.isEmpty)
+        if (isInitialLoading)
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            sliver: SliverGrid.builder(
+              gridDelegate:
+                  const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+                childAspectRatio: 1.0,
+              ),
+              itemCount: 4,
+              itemBuilder: (_, _) => const _FolderCardSkeleton(),
+            ),
+          )
+        else if (filtered.isEmpty)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
@@ -396,28 +413,36 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
           )
         else
-          SliverPadding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            sliver: SliverGrid.builder(
-              gridDelegate:
-                  const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-                childAspectRatio: 1.0,
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: _ReorderableFolderGrid(
+                folders: filtered,
+                colorOffset: colorOffset,
+                statsAsync: statsAsync,
+                reorderEnabled: _query.isEmpty,
+                onOpen: (f) => context.push('/folder/${f.id}'),
+                onLongPressActions: _showFolderActions,
+                onReorder: (newOrder) async {
+                  // Optimistic UI lives inside the grid; here we persist.
+                  try {
+                    await persistFolderOrder(
+                      ref.read(supabaseClientProvider),
+                      newOrder,
+                    );
+                  } catch (e) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      backgroundColor: const Color(0xFFD64B4B),
+                      behavior: SnackBarBehavior.floating,
+                      content: Text(
+                        'Could not save folder order: $e',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ));
+                  }
+                },
               ),
-              itemCount: filtered.length,
-              itemBuilder: (_, i) {
-                final folder = filtered[i];
-                final idx = folders.indexOf(folder);
-                return _FolderCard(
-                  folder: folder,
-                  colorIndex: idx + colorOffset,
-                  stats: statsAsync.value?[folder.id],
-                  onTap: () => context.push('/folder/${folder.id}'),
-                  onLongPress: () => _showFolderActions(folder),
-                );
-              },
             ),
           ),
     ];
@@ -526,17 +551,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           label: 'You',
                           initial: _initial(p?.fullName),
                           isYou: activeOwner == null,
+                          avatarUrl: p?.avatarUrl,
                           onTap: activeOwner == null
                               ? null
                               : () => ref
                                   .read(activeOwnerProvider.notifier)
                                   .state = null,
                         ),
-                        loading: () => const _AvatarItem(
-                          label: 'You',
-                          initial: '?',
-                          isYou: true,
-                        ),
+                        loading: () => const _AvatarItemSkeleton(),
                         error: (_, _) => const SizedBox.shrink(),
                       ),
                       ...familyAsync.when(
@@ -546,6 +568,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                 label: p.fullName?.split(' ').first ?? '?',
                                 initial: _initial(p.fullName),
                                 isYou: activeOwner == p.id,
+                                avatarUrl: p.avatarUrl,
                                 onTap: () => ref
                                     .read(activeOwnerProvider.notifier)
                                     .state = p.id,
@@ -1467,6 +1490,11 @@ class _FolderCard extends StatelessWidget {
                   ),
               ],
             ),
+            if (count > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: _FilePreviewGrid(count: count, accent: color),
+              ),
             const Spacer(),
             Text(
               folder.name,
@@ -1498,16 +1526,540 @@ class _FolderCard extends StatelessWidget {
 
 // ── Avatar item ────────────────────────────────────────────────────────────────
 
+// ── Reorderable folder grid ────────────────────────────────────────────────────
+
+/// 2-column folder grid that supports long-press drag-and-drop reordering.
+///
+/// While the user drags, the grid maintains its own local order so the UI
+/// stays responsive without waiting for Supabase. On drop, the new order is
+/// pushed up via [onReorder] for persistence; if persistence fails, the
+/// stream's authoritative order eventually overwrites the local state.
+class _ReorderableFolderGrid extends StatefulWidget {
+  final List<Folder> folders;
+  final int colorOffset;
+  final AsyncValue<Map<String, FolderStats>> statsAsync;
+  final bool reorderEnabled;
+  final void Function(Folder) onOpen;
+  final void Function(Folder) onLongPressActions;
+  final void Function(List<Folder> newOrder) onReorder;
+
+  const _ReorderableFolderGrid({
+    required this.folders,
+    required this.colorOffset,
+    required this.statsAsync,
+    required this.reorderEnabled,
+    required this.onOpen,
+    required this.onLongPressActions,
+    required this.onReorder,
+  });
+
+  @override
+  State<_ReorderableFolderGrid> createState() => _ReorderableFolderGridState();
+}
+
+class _ReorderableFolderGridState extends State<_ReorderableFolderGrid> {
+  late List<Folder> _local = List.of(widget.folders);
+  int? _draggingIndex;
+  int? _hoverIndex;
+
+  @override
+  void didUpdateWidget(covariant _ReorderableFolderGrid old) {
+    super.didUpdateWidget(old);
+    // Only sync from incoming when no drag is in flight, otherwise the stream
+    // update would yank the tile out from under the user's finger.
+    if (_draggingIndex == null) {
+      final incoming = widget.folders;
+      final changed = incoming.length != _local.length ||
+          !List.generate(incoming.length, (i) => i)
+              .every((i) => incoming[i].id == _local[i].id);
+      if (changed) _local = List.of(incoming);
+    }
+  }
+
+  void _move(int from, int to) {
+    if (from == to) return;
+    setState(() {
+      final f = _local.removeAt(from);
+      _local.insert(to, f);
+    });
+    widget.onReorder(List.of(_local));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const cross = 2;
+        const gap = 16.0;
+        final tileWidth = (constraints.maxWidth - gap) / cross;
+        final tileHeight = tileWidth; // childAspectRatio: 1.0
+
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: cross,
+            crossAxisSpacing: gap,
+            mainAxisSpacing: gap,
+            childAspectRatio: 1.0,
+          ),
+          itemCount: _local.length,
+          itemBuilder: (_, i) {
+            final folder = _local[i];
+            // Color follows the ORIGINAL folder identity (its index in the
+            // incoming list + offset), so a tile keeps the same dot color
+            // even after the user reorders it.
+            final originalIdx = widget.folders.indexOf(folder);
+            final colorIdx = (originalIdx < 0 ? i : originalIdx) +
+                widget.colorOffset;
+            return _ReorderableTile(
+              index: i,
+              tileWidth: tileWidth,
+              tileHeight: tileHeight,
+              folder: folder,
+              colorIndex: colorIdx,
+              stats: widget.statsAsync.value?[folder.id],
+              reorderEnabled: widget.reorderEnabled,
+              isDragging: _draggingIndex == i,
+              isHover: _hoverIndex == i && _draggingIndex != i,
+              onTap: () => widget.onOpen(folder),
+              onActions: () => widget.onLongPressActions(folder),
+              onDragStart: () => setState(() => _draggingIndex = i),
+              onDragEnd: () => setState(() {
+                _draggingIndex = null;
+                _hoverIndex = null;
+              }),
+              onWillAccept: (sourceIdx) =>
+                  sourceIdx != null && sourceIdx != i,
+              onHover: (sourceIdx) {
+                if (sourceIdx == null || sourceIdx == i) return;
+                if (_hoverIndex != i) {
+                  setState(() => _hoverIndex = i);
+                }
+              },
+              onAccept: (sourceIdx) => _move(sourceIdx, i),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _ReorderableTile extends StatelessWidget {
+  final int index;
+  final double tileWidth;
+  final double tileHeight;
+  final Folder folder;
+  final int colorIndex;
+  final FolderStats? stats;
+  final bool reorderEnabled;
+  final bool isDragging;
+  final bool isHover;
+  final VoidCallback onTap;
+  final VoidCallback onActions;
+  final VoidCallback onDragStart;
+  final VoidCallback onDragEnd;
+  final bool Function(int?) onWillAccept;
+  final void Function(int?) onHover;
+  final void Function(int) onAccept;
+
+  const _ReorderableTile({
+    required this.index,
+    required this.tileWidth,
+    required this.tileHeight,
+    required this.folder,
+    required this.colorIndex,
+    required this.stats,
+    required this.reorderEnabled,
+    required this.isDragging,
+    required this.isHover,
+    required this.onTap,
+    required this.onActions,
+    required this.onDragStart,
+    required this.onDragEnd,
+    required this.onWillAccept,
+    required this.onHover,
+    required this.onAccept,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final card = _FolderCard(
+      folder: folder,
+      colorIndex: colorIndex,
+      stats: stats,
+      onTap: onTap,
+      onLongPress: onActions,
+    );
+
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (d) => onWillAccept(d.data),
+      onMove: (d) => onHover(d.data),
+      onAcceptWithDetails: (d) => onAccept(d.data),
+      builder: (context, candidate, _) {
+        final highlight = isHover || candidate.isNotEmpty;
+        final hidden = isDragging;
+        Widget tile = AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: highlight
+                ? [
+                    BoxShadow(
+                      color: AppTheme.primaryDark.withValues(alpha: 0.18),
+                      blurRadius: 22,
+                      spreadRadius: 1,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: AnimatedScale(
+            duration: const Duration(milliseconds: 140),
+            scale: highlight ? 1.03 : 1.0,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 120),
+              opacity: hidden ? 0.0 : 1.0,
+              child: card,
+            ),
+          ),
+        );
+
+        if (!reorderEnabled) return tile;
+
+        return LongPressDraggable<int>(
+          data: index,
+          delay: const Duration(milliseconds: 280),
+          hapticFeedbackOnStart: true,
+          onDragStarted: onDragStart,
+          onDraggableCanceled: (_, _) => onDragEnd(),
+          onDragEnd: (_) => onDragEnd(),
+          onDragCompleted: onDragEnd,
+          feedback: Material(
+            color: Colors.transparent,
+            child: Transform.scale(
+              scale: 1.06,
+              child: SizedBox(
+                width: tileWidth,
+                height: tileHeight,
+                child: card,
+              ),
+            ),
+          ),
+          // The DragTarget child already animates to hidden via opacity.
+          childWhenDragging: tile,
+          child: tile,
+        );
+      },
+    );
+  }
+}
+
+// ── Skeleton / shimmer scaffolding ─────────────────────────────────────────────
+
+const Color _kSkelBase = Color(0xFFE2EAEF);
+
+class _Shimmer extends StatefulWidget {
+  final Widget child;
+  const _Shimmer({required this.child});
+
+  @override
+  State<_Shimmer> createState() => _ShimmerState();
+}
+
+class _ShimmerState extends State<_Shimmer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1300),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, child) {
+        return ShaderMask(
+          blendMode: BlendMode.srcATop,
+          shaderCallback: (rect) => LinearGradient(
+            begin: Alignment.centerLeft,
+            end: Alignment.centerRight,
+            colors: const [
+              Color(0x00FFFFFF),
+              Color(0xB3FFFFFF),
+              Color(0x00FFFFFF),
+            ],
+            stops: const [0.35, 0.5, 0.65],
+            transform: _SlidingGradientTransform(percent: _ctrl.value * 2 - 1),
+          ).createShader(rect),
+          child: child,
+        );
+      },
+      child: widget.child,
+    );
+  }
+}
+
+class _SlidingGradientTransform extends GradientTransform {
+  final double percent;
+  const _SlidingGradientTransform({required this.percent});
+  @override
+  Matrix4? transform(Rect bounds, {TextDirection? textDirection}) {
+    return Matrix4.translationValues(bounds.width * percent, 0, 0);
+  }
+}
+
+class _SkelBox extends StatelessWidget {
+  final double? width;
+  final double height;
+  final double radius;
+  const _SkelBox({this.width, required this.height, this.radius = 6});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: _kSkelBase,
+        borderRadius: BorderRadius.circular(radius),
+      ),
+    );
+  }
+}
+
+class _SkelCircle extends StatelessWidget {
+  final double size;
+  const _SkelCircle({required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: const BoxDecoration(
+        color: _kSkelBase,
+        shape: BoxShape.circle,
+      ),
+    );
+  }
+}
+
+class _FolderCardSkeleton extends StatelessWidget {
+  const _FolderCardSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 18,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(18),
+      child: const _Shimmer(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _SkelCircle(size: 8),
+                Spacer(),
+                _SkelBox(width: 14, height: 13, radius: 3),
+              ],
+            ),
+            SizedBox(height: 12),
+            Row(
+              children: [
+                _SkelBox(width: 28, height: 38, radius: 5),
+                SizedBox(width: 6),
+                _SkelBox(width: 28, height: 38, radius: 5),
+                SizedBox(width: 6),
+                _SkelBox(width: 28, height: 38, radius: 5),
+              ],
+            ),
+            Spacer(),
+            _SkelBox(width: 110, height: 15, radius: 4),
+            SizedBox(height: 8),
+            _SkelBox(width: 70, height: 11, radius: 3),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AvatarItemSkeleton extends StatelessWidget {
+  const _AvatarItemSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _Shimmer(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 68,
+            height: 68,
+            child: Center(child: _SkelCircle(size: 60)),
+          ),
+          SizedBox(height: 8),
+          _SkelBox(width: 28, height: 10, radius: 3),
+        ],
+      ),
+    );
+  }
+}
+
+/// Single row of up to 4 paper-card previews shown inside a folder tile
+/// when it contains files. The last slot becomes a "+N" badge when there
+/// are more than four files.
+class _FilePreviewGrid extends StatelessWidget {
+  final int count;
+  final Color accent;
+  const _FilePreviewGrid({required this.count, required this.accent});
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = count < 4 ? count : 4;
+    final overflow = count - 4;
+    const gap = 6.0;
+    return SizedBox(
+      height: 38,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (int i = 0; i < shown; i++) ...[
+            if (i > 0) const SizedBox(width: gap),
+            SizedBox(
+              width: 28,
+              height: 38,
+              child: _MiniPaper(
+                accent: accent,
+                overflowLabel: (overflow > 0 && i == shown - 1)
+                    ? '+$overflow'
+                    : null,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniPaper extends StatelessWidget {
+  final Color accent;
+  final String? overflowLabel;
+  const _MiniPaper({required this.accent, this.overflowLabel});
+
+  @override
+  Widget build(BuildContext context) {
+    if (overflowLabel != null) {
+      return Container(
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(
+            color: accent.withValues(alpha: 0.35),
+            width: 1,
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          overflowLabel!,
+          style: TextStyle(
+            color: accent,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.2,
+          ),
+        ),
+      );
+    }
+    return LayoutBuilder(
+      builder: (_, c) {
+        final w = c.maxWidth;
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(
+              color: const Color(0xFFE2E8F0),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 3,
+                offset: const Offset(0, 1),
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.fromLTRB(5, 5, 5, 5),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              Container(
+                width: w * 0.6,
+                height: 3,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(1.5),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Container(
+                width: w * 0.82,
+                height: 2,
+                color: const Color(0xFFE2E8F0),
+              ),
+              const SizedBox(height: 2.5),
+              Container(
+                width: w * 0.65,
+                height: 2,
+                color: const Color(0xFFE2E8F0),
+              ),
+              const SizedBox(height: 2.5),
+              Container(
+                width: w * 0.5,
+                height: 2,
+                color: const Color(0xFFE2E8F0),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _AvatarItem extends StatelessWidget {
   final String label;
   final String initial;
   final bool isYou;
+  final String? avatarUrl;
   final VoidCallback? onTap;
 
   const _AvatarItem({
     required this.label,
     required this.initial,
     required this.isYou,
+    this.avatarUrl,
     this.onTap,
   });
 
@@ -1516,7 +2068,7 @@ class _AvatarItem extends StatelessWidget {
     const tile = Color(0xFFE3EFE9); // soft mint surface
     const accentRing = Color(0xFF1E293B);
 
-    final circle = Container(
+    final initialFallback = Container(
       width: 60,
       height: 60,
       decoration: const BoxDecoration(
@@ -1533,6 +2085,24 @@ class _AvatarItem extends StatelessWidget {
           ),
         ),
       ),
+    );
+
+    final hasUrl = avatarUrl != null && avatarUrl!.isNotEmpty;
+    final circle = SizedBox(
+      width: 60,
+      height: 60,
+      child: hasUrl
+          ? ClipOval(
+              child: CachedNetworkImage(
+                imageUrl: avatarUrl!,
+                width: 60,
+                height: 60,
+                fit: BoxFit.cover,
+                placeholder: (_, _) => initialFallback,
+                errorWidget: (_, _, _) => initialFallback,
+              ),
+            )
+          : initialFallback,
     );
 
     return GestureDetector(
@@ -1574,32 +2144,64 @@ class _AvatarItem extends StatelessWidget {
 
 // ── Add family button ──────────────────────────────────────────────────────────
 
-class _AddFamilyButton extends StatelessWidget {
+class _AddFamilyButton extends StatefulWidget {
   final VoidCallback onTap;
   const _AddFamilyButton({required this.onTap});
 
   @override
+  State<_AddFamilyButton> createState() => _AddFamilyButtonState();
+}
+
+class _AddFamilyButtonState extends State<_AddFamilyButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _glow = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 850),
+  );
+
+  @override
+  void dispose() {
+    _glow.dispose();
+    super.dispose();
+  }
+
+  void _handleTap() {
+    _glow
+      ..stop()
+      ..forward(from: 0);
+    widget.onTap();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: _handleTap,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          CustomPaint(
-            painter: _DashedCirclePainter(
-              color: const Color(0xFF4A5568).withValues(alpha: 0.55),
-            ),
-            child: const SizedBox(
-              width: 68,
-              height: 68,
-              child: Center(
-                child: Icon(
-                  Icons.add_rounded,
-                  size: 22,
-                  color: Color(0xFF4A5568),
+          AnimatedBuilder(
+            animation: _glow,
+            builder: (_, _) {
+              return CustomPaint(
+                painter: _DashedCirclePainter(
+                  color: const Color(0xFF4A5568).withValues(alpha: 0.55),
                 ),
-              ),
-            ),
+                foregroundPainter: _glow.isAnimating || _glow.value > 0
+                    ? _GlowArcPainter(progress: _glow.value)
+                    : null,
+                child: const SizedBox(
+                  width: 68,
+                  height: 68,
+                  child: Center(
+                    child: Icon(
+                      Icons.add_rounded,
+                      size: 22,
+                      color: Color(0xFF4A5568),
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
           const SizedBox(height: 8),
           const Text(
@@ -1615,6 +2217,88 @@ class _AddFamilyButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Two blue comet-tails that orbit the dashed ring in opposite directions,
+/// starting from the top and meeting at the bottom, then continuing back to
+/// the top. Uses a sweep gradient + blur for the comet-tail glow.
+class _GlowArcPainter extends CustomPainter {
+  final double progress; // 0..1, one full orbit
+  _GlowArcPainter({required this.progress});
+
+  static const double _pi = 3.141592653589793;
+  static const double _twoPi = 6.283185307179586;
+  static const double _tailSweep = 1.5; // ~86° comet tail
+  // Vivid electric blue — pops on the mint background.
+  static const Color _glowColor = Color(0xFF3B82F6);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final radius = size.width / 2 - 0.7;
+    final center = Offset(size.width / 2, size.width / 2);
+    final rect = Rect.fromCircle(center: center, radius: radius);
+
+    // Fade the whole effect out near the end so it doesn't snap.
+    final fade = progress < 0.85 ? 1.0 : (1.0 - (progress - 0.85) / 0.15);
+
+    // Two comets start at the top (12 o'clock) and run in opposite
+    // directions — clockwise and counter-clockwise.
+    final topAngle = -_pi / 2;
+    final cwHead = topAngle + progress * _twoPi;
+    final ccwHead = topAngle - progress * _twoPi;
+
+    _drawComet(canvas, rect, head: cwHead, clockwise: true, fade: fade);
+    _drawComet(canvas, rect, head: ccwHead, clockwise: false, fade: fade);
+  }
+
+  void _drawComet(
+    Canvas canvas,
+    Rect rect, {
+    required double head,
+    required bool clockwise,
+    required double fade,
+  }) {
+    // Tail trails behind the head, so its angular start depends on direction.
+    final start = clockwise ? head - _tailSweep : head;
+    final shader = SweepGradient(
+      startAngle: start,
+      endAngle: start + _tailSweep,
+      colors: clockwise
+          ? [
+              _glowColor.withValues(alpha: 0.0),
+              _glowColor.withValues(alpha: 0.55 * fade),
+              _glowColor.withValues(alpha: 0.95 * fade),
+            ]
+          : [
+              _glowColor.withValues(alpha: 0.95 * fade),
+              _glowColor.withValues(alpha: 0.55 * fade),
+              _glowColor.withValues(alpha: 0.0),
+            ],
+      stops: const [0.0, 0.3, 1.0],
+      transform: GradientRotation(start),
+    ).createShader(rect);
+
+    // Outer soft halo.
+    final halo = Paint()
+      ..shader = shader
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 6.0
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+    canvas.drawArc(rect, start, _tailSweep, false, halo);
+
+    // Crisp inner streak.
+    final streak = Paint()
+      ..shader = shader
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 2.4;
+    canvas.drawArc(rect, start, _tailSweep, false, streak);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GlowArcPainter old) =>
+      old.progress != progress;
 }
 
 class _DashedCirclePainter extends CustomPainter {

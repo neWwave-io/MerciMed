@@ -17,6 +17,7 @@ class Folder {
   final String? parentFolderId;
   final String? notes;
   final bool isChat;
+  final int? sortOrder;
   final DateTime createdAt;
 
   const Folder({
@@ -26,6 +27,7 @@ class Folder {
     this.parentFolderId,
     this.notes,
     this.isChat = false,
+    this.sortOrder,
     required this.createdAt,
   });
 
@@ -36,6 +38,7 @@ class Folder {
         parentFolderId: json['parent_folder_id'] as String?,
         notes: json['notes'] as String?,
         isChat: (json['is_chat'] as bool?) ?? false,
+        sortOrder: (json['sort_order'] as num?)?.toInt(),
         createdAt: DateTime.parse(json['created_at'] as String),
       );
 
@@ -46,6 +49,7 @@ class Folder {
         'parent_folder_id': parentFolderId,
         'notes': notes,
         'is_chat': isChat,
+        'sort_order': sortOrder,
         'created_at': createdAt.toIso8601String(),
       };
 
